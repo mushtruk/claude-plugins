@@ -1,5 +1,5 @@
 {
-  "description": "Context guard: tells a subagent to hand off at 120k tokens, and the main thread at 150k; after a compaction, loads the newest handoff.",
+  "description": "Context guard: tells a subagent to hand off at 120k tokens, and the main thread at 115k (before compaction, which fires around 130-137k); after a compaction, loads the newest handoff.",
   "hooks": {
     "PostToolUse": [
       {"matcher": "*", "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/ctxguard\" hook", "timeout": 5}]}

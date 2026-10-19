@@ -21,7 +21,7 @@ import (
 
 const (
 	defaultAgentLimit = 120000
-	defaultMainLimit  = 150000
+	defaultMainLimit  = 115000 // well under the observed compaction point; see TestMainLimitBelowObservedCompaction
 	handoffMaxAge     = 3 * time.Hour
 	handoffMaxChars   = 9500
 
@@ -84,7 +84,7 @@ func statusline(in io.Reader, out io.Writer) {
 	switch {
 	case !known:
 		c = dim + "ctx –" + reset
-	case ctx >= 150000:
+	case ctx >= defaultMainLimit:
 		c = fmt.Sprintf("%sctx %dk · handoff%s", red, ctx/1000, reset)
 	case ctx >= 100000:
 		c = fmt.Sprintf("%sctx %dk%s", yellow, ctx/1000, reset)
@@ -204,8 +204,8 @@ func stop(h hookInput) (any, string) {
 	}
 	return map[string]any{
 		"decision": "block",
-		"reason": fmt.Sprintf("Context is %dk (limit %dk). If agents or background work are still running, tell the user what is pending and stop. "+
-			"Otherwise run the handoff command now (/handoff:handoff from the plugin, or /handoff), then stop.", n/1000, limit/1000),
+		"reason": fmt.Sprintf("Context is %dk (limit %dk). Run the handoff command now (/handoff:handoff from the plugin, or /handoff), even if agents or background work are still running: "+
+			"list them in the handoff as in flight with their ids/descriptions, and do not stop or wait for them. Then stop.", n/1000, limit/1000),
 	}, fmt.Sprintf("main-blocked %d", n)
 }
 
@@ -213,9 +213,11 @@ func sessionStart(h hookInput) (any, string) {
 	if h.Source != "compact" {
 		return nil, "not-compact"
 	}
+	// Reset the once-per-session Stop marker on every compaction (handoff or
+	// not), so the guard can block again before the next one.
 	if safeName(h.SessionID) {
 		if dir, err := stateDir(); err == nil {
-			_ = os.Remove(filepath.Join(dir, "main-"+h.SessionID))
+			_ = os.Remove(filepath.Join(dir, "main-"+h.SessionID)) // not-exist is fine
 		}
 	}
 	if h.Cwd == "" {

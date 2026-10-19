@@ -1,5 +1,5 @@
 ---
-description: Use when the context is getting large (status line yellow or red, around 150k or more), at a clean stopping point, or before moving work to a fresh chat
+description: Use when the context is getting large (status line yellow or red, around 115k or more), at a clean stopping point, or before moving work to a fresh chat
 argument-hint: "[optional focus, e.g. 'the telemetry bug']"
 allowed-tools: Bash(git branch:*), Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git -C:*), Bash(git rev-list:*), Bash(git stash list:*), Bash(pbcopy:*), Bash(date:*), Read, Grep, Glob, Write(./.claude/handoffs/**)
 ---

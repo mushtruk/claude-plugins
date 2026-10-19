@@ -16,7 +16,7 @@ Long sessions lose track once the context fills up and gets compacted. This plug
 | Piece | What it does |
 |---|---|
 | `/handoff:handoff [focus]` | Writes `<repo>/.claude/handoffs/<YYYY-MM-DD-HHMM>-<slug>.md` (state, next step, open questions, a kickoff paragraph) and copies it to the clipboard (`pbcopy`; on Linux it prints the text instead). Paste it into a fresh chat. |
-| Stop hook | When the main thread ends a turn at 150k+ tokens, it blocks once and asks Claude to run the handoff. |
+| Stop hook | When the main thread ends a turn at 115k+ tokens, it blocks once and asks Claude to run the handoff, even while subagents are still running (they are listed as in flight). A compaction re-arms it. |
 | PostToolUse hook | When a subagent passes 120k tokens, it tells it once to finish its step and hand off. |
 | SessionStart hook | After a compaction, it injects the newest handoff from the last 3 hours (agent-* files skipped) into the new context. |
 | `handoff:lean-implementer`, `handoff:lean-reviewer` | Lean subagents for plan-driven work. They know the "CONTEXT LIMIT" message: the implementer writes `.claude/handoffs/agent-<task>-<n>.md` and returns `Status: HANDOFF <path>`; the reviewer returns `Status: PARTIAL`. |
@@ -33,7 +33,7 @@ git config --global core.excludesFile ~/.config/git/ignore
 mkdir -p ~/.config/git && echo '.claude/handoffs/' >> ~/.config/git/ignore
 ```
 
-**Status line (optional).** Plugins can't set it, so add this to `~/.claude/settings.json`. It shows `ctx 87k` in green, yellow from 100k, red with "handoff" from 150k:
+**Status line (optional).** Plugins can't set it, so add this to `~/.claude/settings.json`. It shows `ctx 87k` in green, yellow from 100k, red with "handoff" from 115k:
 
 ```json
 "statusLine": {
@@ -50,7 +50,7 @@ Set these in the `env` block of `~/.claude/settings.json`:
 
 | Variable | Default | |
 |---|---|---|
-| `CTXGUARD_MAIN_LIMIT` | `150000` | Main-thread tokens at which the Stop hook asks for a handoff |
+| `CTXGUARD_MAIN_LIMIT` | `115000` | Main-thread tokens at which the Stop hook asks for a handoff. Keep it at least 15k below where compaction really fires: with `autoCompactWindow: 170000` that was measured at about 129-137k, well under the window itself. |
 | `CTXGUARD_AGENT_LIMIT` | `120000` | Subagent tokens at which it is told to hand off |
 | `CTXGUARD_STATE_DIR` | `~/.claude/state/ctxguard` | One-shot markers, so each session or agent is told once |
 | `CTXGUARD_LOG` | unset | A file to log every hook decision to, for debugging |

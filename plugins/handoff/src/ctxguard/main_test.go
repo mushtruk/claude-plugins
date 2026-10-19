@@ -75,18 +75,25 @@ func TestTranscriptContext(t *testing.T) {
 
 func TestStatusline(t *testing.T) {
 	dir := t.TempDir()
-	tr := writeLines(t, filepath.Join(dir, "main.jsonl"), asst(120500, false), asst(9000, true))
+	tr := writeLines(t, filepath.Join(dir, "main.jsonl"), asst(110500, false), asst(9000, true))
+	lim := fmt.Sprint(defaultMainLimit)
+	limK := fmt.Sprint(defaultMainLimit / 1000)
+	below := fmt.Sprint(defaultMainLimit - 1)
 	cases := []struct {
 		name, in, want string
 	}{
 		{"green from current_usage", `{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/a/proj/"},"context_window":{"current_usage":{"input_tokens":5,"cache_read_input_tokens":42000}}}`,
 			"Opus · proj · " + green + "ctx 42k" + reset},
 		{"yellow from transcript", `{"model":{"display_name":"Opus"},"cwd":"/x/y","transcript_path":"` + tr + `"}`,
-			"Opus · y · " + yellow + "ctx 120k" + reset},
-		{"red handoff", `{"model":{"display_name":"Opus"},"cwd":"/x/y","context_window":{"current_usage":{"input_tokens":150000}}}`,
-			"Opus · y · " + red + "ctx 150k · handoff" + reset},
+			"Opus · y · " + yellow + "ctx 110k" + reset},
+		{"yellow from 100k", `{"cwd":"/x/y","context_window":{"current_usage":{"input_tokens":100000}}}`,
+			"y · " + yellow + "ctx 100k" + reset},
+		{"yellow just below main limit", `{"cwd":"/x/y","context_window":{"current_usage":{"input_tokens":` + below + `}}}`,
+			"y · " + yellow + "ctx " + fmt.Sprint((defaultMainLimit-1)/1000) + "k" + reset},
+		{"red handoff at main limit", `{"model":{"display_name":"Opus"},"cwd":"/x/y","context_window":{"current_usage":{"input_tokens":` + lim + `}}}`,
+			"Opus · y · " + red + "ctx " + limK + "k · handoff" + reset},
 		{"zero current_usage falls back to transcript", `{"cwd":"/x/y","transcript_path":"` + tr + `","context_window":{"current_usage":{"input_tokens":0}}}`,
-			"y · " + yellow + "ctx 120k" + reset},
+			"y · " + yellow + "ctx 110k" + reset},
 		{"workspace preferred over cwd", `{"workspace":{"current_dir":"/w/one"},"cwd":"/x/two"}`,
 			"one · " + dim + "ctx –" + reset},
 		{"unknown", `{"model":{"display_name":"Opus"},"cwd":"/x/y","transcript_path":"/nope"}`,
@@ -195,12 +202,13 @@ func TestPostToolUse(t *testing.T) {
 func TestStop(t *testing.T) {
 	state := setup(t)
 	dir := t.TempDir()
-	low := writeLines(t, filepath.Join(dir, "low.jsonl"), asst(149999, false), asst(200000, true))
-	high := writeLines(t, filepath.Join(dir, "high.jsonl"), asst(151200, false))
+	low := writeLines(t, filepath.Join(dir, "low.jsonl"), asst(defaultMainLimit-1, false), asst(200000, true))
+	high := writeLines(t, filepath.Join(dir, "high.jsonl"), asst(120400, false))
 	ev := func(sess, tr string, active bool) map[string]any {
 		return map[string]any{"hook_event_name": "Stop", "session_id": sess, "transcript_path": tr, "stop_hook_active": active}
 	}
-	wantReason := "Context is 151k (limit 150k). If agents or background work are still running, tell the user what is pending and stop. Otherwise run the handoff command now (/handoff:handoff from the plugin, or /handoff), then stop."
+	wantReason := "Context is 120k (limit 115k). Run the handoff command now (/handoff:handoff from the plugin, or /handoff), even if agents or background work are still running: " +
+		"list them in the handoff as in flight with their ids/descriptions, and do not stop or wait for them. Then stop."
 	cases := []struct {
 		name, sess, tr string
 		active, block  bool
@@ -228,6 +236,53 @@ func TestStop(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(state, "main-s2")); err != nil {
 		t.Fatalf("marker missing: %v", err)
 	}
+}
+
+// observedCompactAt was measured 2026-10-20 from ~/.claude/state/ctxguard/log.jsonl:
+// compaction fires after Stop readings of ~129–137k under autoCompactWindow 170000.
+const observedCompactAt = 137000
+
+func TestMainLimitBelowObservedCompaction(t *testing.T) {
+	if defaultMainLimit+15000 > observedCompactAt {
+		t.Fatalf("defaultMainLimit %d leaves less than 15k headroom below the observed compaction point %d; "+
+			"re-measure where compaction actually fires (log.jsonl Stop readings) before raising the limit",
+			defaultMainLimit, observedCompactAt)
+	}
+}
+
+func TestStopBlocksAgainAfterCompaction(t *testing.T) {
+	state := setup(t)
+	dir := t.TempDir()
+	tr := writeLines(t, filepath.Join(dir, "at.jsonl"), asst(defaultMainLimit, false))
+	stopEv := map[string]any{"hook_event_name": "Stop", "session_id": "sx", "transcript_path": tr}
+	compactEv := map[string]any{"hook_event_name": "SessionStart", "source": "compact", "session_id": "sx", "cwd": t.TempDir()}
+
+	m := runHook(t, stopEv)
+	if m["decision"] != "block" {
+		t.Fatalf("at limit should block: %v", m)
+	}
+	reason, _ := m["reason"].(string)
+	if !strings.Contains(reason, "/handoff") {
+		t.Fatalf("reason lacks /handoff: %q", reason)
+	}
+	if strings.Contains(reason, "tell the user what is pending and stop") {
+		t.Fatalf("reason still exempts running agents: %q", reason)
+	}
+	if m := runHook(t, stopEv); m != nil {
+		t.Fatalf("second stop should not block (marker): %v", m)
+	}
+	if m := runHook(t, compactEv); m != nil {
+		t.Fatalf("compact without handoff should inject nothing: %v", m)
+	}
+	if _, err := os.Stat(filepath.Join(state, "main-sx")); !os.IsNotExist(err) {
+		t.Fatalf("marker not removed on compact without handoff: %v", err)
+	}
+	if m := runHook(t, stopEv); m["decision"] != "block" {
+		t.Fatalf("stop after compaction should block again: %v", m)
+	}
+	// Compact with no marker present is harmless.
+	os.Remove(filepath.Join(state, "main-sx"))
+	runHook(t, compactEv)
 }
 
 func TestSessionStartCompact(t *testing.T) {
