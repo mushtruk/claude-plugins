@@ -1,0 +1,13 @@
+#!/bin/sh
+# Runs the ctxguard build for this OS and CPU. Invoked through sh, so its own executable bit doesn't matter.
+d=$(dirname "$0")
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+case $(uname -m) in
+  arm64 | aarch64) arch=arm64 ;;
+  x86_64 | amd64) arch=amd64 ;;
+  *) exit 0 ;;
+esac
+b=$d/ctxguard-$os-$arch
+[ -f "$b" ] || exit 0
+[ -x "$b" ] || chmod +x "$b" 2>/dev/null
+exec "$b" "$@"

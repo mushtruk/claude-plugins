@@ -1,0 +1,8 @@
+{
+  "name": "handoff",
+  "description": "Context-limit handoffs: a status line, hooks that make the main thread and subagents write a handoff before the context fills, and the /handoff command.",
+  "author": {
+    "name": "mushtruk"
+  },
+  "repository": "https://github.com/mushtruk/claude-plugins"
+}

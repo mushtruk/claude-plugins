@@ -1,0 +1,12 @@
+{
+  "name": "mushtruk",
+  "owner": {"name": "mushtruk"},
+  "description": "mushtruk's Claude Code plugins",
+  "plugins": [
+    {
+      "name": "handoff",
+      "source": "./plugins/handoff",
+      "description": "Context-limit handoffs: status line, threshold hooks, /handoff command, lean subagents"
+    }
+  ]
+}
