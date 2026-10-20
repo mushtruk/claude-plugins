@@ -1,7 +1,7 @@
 ---
 description: Use when the context is getting large (status line yellow or red, around 115k or more), at a clean stopping point, or before moving work to a fresh chat
 argument-hint: "[optional focus, e.g. 'the telemetry bug']"
-allowed-tools: Bash(git branch:*), Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git -C:*), Bash(git rev-list:*), Bash(git stash list:*), Bash(pbcopy:*), Bash(date:*), Read, Grep, Glob, Write(./.claude/handoffs/**)
+allowed-tools: Bash(git branch:*), Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git -C:*), Bash(git rev-list:*), Bash(git stash list:*), Bash(pbcopy:*), Bash(wl-copy:*), Bash(date:*), Read, Grep, Glob, Write(./.claude/handoffs/**)
 ---
 
 # Handoff
@@ -63,11 +63,11 @@ Before saving, check:
 - No secrets, no file dumps, no relative dates.
 
 ## 5. Deliver
-Run `pbcopy < <file>`, so the full text is on the clipboard and the new chat gets it from one paste with no file permission prompt. Then reply with only these lines:
+Copy the file to the clipboard with the tool for this platform: `pbcopy < <file>` on macOS, `wl-copy < <file>` on Linux under Wayland. This puts the full text on the clipboard, so the new chat gets it from one paste with no file permission prompt. Then reply with only these lines:
 
 ```text
-Handoff saved: [<file name>](<path>) · copied to clipboard. Open a new chat and paste (⌘V).
+Handoff saved: [<file name>](<path>) · copied to clipboard. Open a new chat and paste (⌘V on macOS, Ctrl+V on Linux).
 Next: <the single next action> · Waiting on you: <questions, each marked gates or doesn't gate Next> | nothing
 Persisted: <what step 1 wrote, and where> | nothing
 ```
-If `pbcopy` fails, say so and print the file's contents in a block fenced with four backticks (````text) instead.
+If the copy fails, or the platform has neither tool, say so and print the file's contents in a block fenced with four backticks (````text) instead.

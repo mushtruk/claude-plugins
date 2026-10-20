@@ -15,7 +15,7 @@ Long sessions lose track once the context fills up and gets compacted. This plug
 
 | Piece | What it does |
 |---|---|
-| `/handoff:handoff [focus]` | Writes `<repo>/.claude/handoffs/<YYYY-MM-DD-HHMM>-<slug>.md` (state, next step, open questions, a kickoff paragraph) and copies it to the clipboard (`pbcopy`; on Linux it prints the text instead). Paste it into a fresh chat. |
+| `/handoff:handoff [focus]` | Writes `<repo>/.claude/handoffs/<YYYY-MM-DD-HHMM>-<slug>.md` (state, next step, open questions, a kickoff paragraph) and copies it to the clipboard (`pbcopy` on macOS, `wl-copy` on Wayland; elsewhere it prints the text instead). Paste it into a fresh chat. |
 | Stop hook | When the main thread ends a turn at 115k+ tokens, it blocks once and asks Claude to run the handoff, even while subagents are still running (they are listed as in flight). A compaction re-arms it. |
 | PostToolUse hook | When a subagent passes 120k tokens, it tells it once to finish its step and hand off. |
 | SessionStart hook | After a compaction, it injects the newest handoff from the last 3 hours (agent-* files skipped) into the new context. |
