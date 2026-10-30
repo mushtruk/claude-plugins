@@ -207,8 +207,8 @@ func TestStop(t *testing.T) {
 	ev := func(sess, tr string, active bool) map[string]any {
 		return map[string]any{"hook_event_name": "Stop", "session_id": sess, "transcript_path": tr, "stop_hook_active": active}
 	}
-	wantReason := "Context is 120k (limit 115k). Run the handoff command now (/handoff:handoff from the plugin, or /handoff), even if agents or background work are still running: " +
-		"list them in the handoff as in flight with their ids/descriptions, and do not stop or wait for them. Then stop."
+	wantReason := "Context is 120k (limit 115k). No subagents are running. Run the handoff command now (/handoff:handoff from the plugin, or /handoff), " +
+		"and do not start new work first. Then stop."
 	cases := []struct {
 		name, sess, tr string
 		active, block  bool
@@ -235,6 +235,58 @@ func TestStop(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(state, "main-s2")); err != nil {
 		t.Fatalf("marker missing: %v", err)
+	}
+}
+
+func launch(id string, sidechain bool) string {
+	return fmt.Sprintf(`{"type":"user","isSidechain":%t,"message":{"role":"user","content":[{"type":"tool_result","content":"Async agent launched successfully."}]},"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":%q}}`, sidechain, id)
+}
+
+func notify(id, typ string) string {
+	return fmt.Sprintf(`{"type":%q,"isSidechain":false,"content":"<task-notification>\n<task-id>%s</task-id>\n<status>completed</status>\n</task-notification>"}`, typ, id)
+}
+
+func TestRunningAgents(t *testing.T) {
+	cases := []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"none", []string{asst(1000, false)}, ""},
+		{"launched, not notified", []string{launch("a1", false), asst(1000, false)}, "a1"},
+		{"notified", []string{launch("a1", false), notify("a1", "attachment")}, ""},
+		{"queued only still running", []string{launch("a1", false), notify("a1", "queue-operation")}, "a1"},
+		{"sidechain launch ignored", []string{launch("a1", true)}, ""},
+		{"one of two done", []string{launch("a1", false), launch("a2", false), notify("a1", "attachment")}, "a2"},
+		{"launch far behind the tail", append([]string{launch("a1", false)}, padLines(4200<<10)...), "a1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeLines(t, filepath.Join(t.TempDir(), "t.jsonl"), tc.lines...)
+			ids, err := runningAgents(p)
+			if err != nil || strings.Join(ids, ",") != tc.want {
+				t.Fatalf("got (%v,%v) want %q", ids, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestStopWaitsForRunningAgents(t *testing.T) {
+	state := setup(t)
+	dir := t.TempDir()
+	tr := filepath.Join(dir, "t.jsonl")
+	ev := map[string]any{"hook_event_name": "Stop", "session_id": "sw", "transcript_path": tr}
+
+	writeLines(t, tr, launch("a1", false), asst(120400, false))
+	if m := runHook(t, ev); m != nil {
+		t.Fatalf("should wait while a1 runs: %v", m)
+	}
+	if _, err := os.Stat(filepath.Join(state, "main-sw")); !os.IsNotExist(err) {
+		t.Fatalf("waiting must not set the marker: %v", err)
+	}
+	writeLines(t, tr, launch("a1", false), notify("a1", "attachment"), asst(121000, false))
+	if m := runHook(t, ev); m["decision"] != "block" {
+		t.Fatalf("should block once a1 finished: %v", m)
 	}
 }
 
