@@ -11,7 +11,8 @@ allowed-tools: Bash(git branch:*), Bash(git status:*), Bash(git log:*), Bash(git
 $ARGUMENTS: if given, weight the handoff toward this.
 
 ## 1. Settle, before writing
-- **Running work** (agents, background shells, watchers) dies with this chat. If it finishes within minutes, wait for it. Otherwise stop it and record where it stood: the last completed step and the files it touched.
+- **Running subagents**: wait for every one to finish before writing, and put its result in the handoff. Do not start new work while you wait.
+- **Other running work** (background shells, watchers) dies with this chat. If it finishes within minutes, wait for it. Otherwise stop it and record where it stood: the last completed step and the files it touched.
 - **Durable facts** (user decisions and preferences, rules, findings that outlive the next piece): write them to memory or the plan doc now, following your memory rules. The handoff points to them; it is not storage.
 
 ## 2. Gather, in every repo this session touched

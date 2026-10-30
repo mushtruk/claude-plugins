@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -96,4 +97,77 @@ func scanTail(f io.ReaderAt, size, tail int64, skipSidechain bool) (int, bool) {
 		return usageTokens(r.Message.Usage), true
 	}
 	return 0, false
+}
+
+var (
+	launchKey   = []byte(`"async_launched"`)
+	notifyKey   = []byte(`<task-notification>`)
+	queueOpKey  = []byte(`"type":"queue-operation"`)
+	taskIDOpen  = []byte(`<task-id>`)
+	taskIDClose = []byte(`</task-id>`)
+)
+
+type launchRecord struct {
+	Type          string `json:"type"`
+	IsSidechain   bool   `json:"isSidechain"`
+	ToolUseResult *struct {
+		Status  string `json:"status"`
+		AgentID string `json:"agentId"`
+	} `json:"toolUseResult"`
+}
+
+// runningAgents returns the ids of background agents the main thread launched
+// and has not yet received a task-notification for. The whole file is read:
+// a launch can be far behind the tail.
+func runningAgents(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	running := map[string]bool{}
+	var order []string
+	r := bufio.NewReaderSize(f, 1<<20)
+	for {
+		line, err := r.ReadBytes('\n')
+		switch {
+		case bytes.Contains(line, launchKey):
+			var rec launchRecord
+			if json.Unmarshal(line, &rec) == nil && rec.Type == "user" && !rec.IsSidechain &&
+				rec.ToolUseResult != nil && rec.ToolUseResult.Status == "async_launched" && rec.ToolUseResult.AgentID != "" {
+				if !running[rec.ToolUseResult.AgentID] {
+					order = append(order, rec.ToolUseResult.AgentID)
+				}
+				running[rec.ToolUseResult.AgentID] = true
+			}
+		case bytes.Contains(line, notifyKey) && !bytes.Contains(line, queueOpKey):
+			// Only the delivered notification counts, not the queue entry.
+			for rest := line; ; {
+				i := bytes.Index(rest, taskIDOpen)
+				if i < 0 {
+					break
+				}
+				rest = rest[i+len(taskIDOpen):]
+				j := bytes.Index(rest, taskIDClose)
+				if j < 0 {
+					break
+				}
+				delete(running, string(rest[:j]))
+				rest = rest[j:]
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var ids []string
+	for _, id := range order {
+		if running[id] {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }

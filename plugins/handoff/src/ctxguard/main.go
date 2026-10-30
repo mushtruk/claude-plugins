@@ -199,13 +199,19 @@ func stop(h hookInput) (any, string) {
 	if n < limit {
 		return nil, fmt.Sprintf("main-below %d", n)
 	}
+	// A handoff written now would miss the agents' results. Let the turn end
+	// without the marker: their task-notification wakes the main thread, and
+	// the Stop after that blocks.
+	if ids, err := runningAgents(h.TranscriptPath); err == nil && len(ids) > 0 {
+		return nil, fmt.Sprintf("main-waiting-agents %d %s", n, strings.Join(ids, ","))
+	}
 	if !createMarker("main-" + h.SessionID) {
 		return nil, fmt.Sprintf("main-already-blocked %d", n)
 	}
 	return map[string]any{
 		"decision": "block",
-		"reason": fmt.Sprintf("Context is %dk (limit %dk). Run the handoff command now (/handoff:handoff from the plugin, or /handoff), even if agents or background work are still running: "+
-			"list them in the handoff as in flight with their ids/descriptions, and do not stop or wait for them. Then stop.", n/1000, limit/1000),
+		"reason": fmt.Sprintf("Context is %dk (limit %dk). No subagents are running. Run the handoff command now (/handoff:handoff from the plugin, or /handoff), "+
+			"and do not start new work first. Then stop.", n/1000, limit/1000),
 	}, fmt.Sprintf("main-blocked %d", n)
 }
 
