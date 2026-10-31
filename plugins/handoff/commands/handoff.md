@@ -1,5 +1,5 @@
 ---
-description: Use when the context is getting large (status line yellow or red, around 115k or more), at a clean stopping point, or before moving work to a fresh chat
+description: Use when the context is getting large (status line yellow or red, around 100k or more), at a clean stopping point, or before moving work to a fresh chat
 argument-hint: "[optional focus, e.g. 'the telemetry bug']"
 allowed-tools: Bash(git branch:*), Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git -C:*), Bash(git rev-list:*), Bash(git stash list:*), Bash(pbcopy:*), Bash(wl-copy:*), Bash(date:*), Read, Grep, Glob, Write(./.claude/handoffs/**)
 ---
@@ -11,7 +11,7 @@ allowed-tools: Bash(git branch:*), Bash(git status:*), Bash(git log:*), Bash(git
 $ARGUMENTS: if given, weight the handoff toward this.
 
 ## 1. Settle, before writing
-- **Running work** (agents, background shells, watchers) dies with this chat. If it finishes within minutes, wait for it. Otherwise stop it and record where it stood: the last completed step and the files it touched.
+- **Running work** (agents, workflows, background shells, watchers) survives compaction. Do not stop it and do not wait for it. List each one as in flight with its id/description and the file its result lands in, so after compaction a missing notification costs one file read.
 - **Durable facts** (user decisions and preferences, rules, findings that outlive the next piece): write them to memory or the plan doc now, following your memory rules. The handoff points to them; it is not storage.
 
 ## 2. Gather, in every repo this session touched
@@ -31,6 +31,8 @@ Check every file:line, symbol, hash, path, command and number before it goes in,
 
 ## 4. Write it to a file
 Save to `<primary repo>/.claude/handoffs/<YYYY-MM-DD-HHMM>-<slug>.md`, where the primary repo is the chat's working directory and the slug is 2–4 words of the title. Keep `.claude/handoffs/` out of git (a global gitignore entry; see the plugin README). Write plain text in this shape: no outer fence, inner code fences are fine. A long session needs about 600–900 words, a short one a few lines. Omit empty sections.
+
+**Running log.** After the first handoff in this chat, keep that same file current with small edits at each milestone (a task frozen, a decision made, an agent dispatched or finished) instead of re-gathering everything into a new one.
 
 ```text
 Handoff: <title> · <YYYY-MM-DD>
@@ -63,11 +65,11 @@ Before saving, check:
 - No secrets, no file dumps, no relative dates.
 
 ## 5. Deliver
-Copy the file to the clipboard with the tool for this platform: `pbcopy < <file>` on macOS, `wl-copy < <file>` on Linux under Wayland. This puts the full text on the clipboard, so the new chat gets it from one paste with no file permission prompt. Then reply with only these lines:
+By default, do not copy anything and do not ask for a new chat: the work continues here, and compaction (or a `/clear`) re-injects the newest handoff. Reply with only these lines, then carry on with Next:
 
 ```text
-Handoff saved: [<file name>](<path>) · copied to clipboard. Open a new chat and paste (⌘V on macOS, Ctrl+V on Linux).
+Handoff saved: [<file name>](<path>) · continuing here; compaction re-injects it.
 Next: <the single next action> · Waiting on you: <questions, each marked gates or doesn't gate Next> | nothing
 Persisted: <what step 1 wrote, and where> | nothing
 ```
-If the copy fails, or the platform has neither tool, say so and print the file's contents in a block fenced with four backticks (````text) instead.
+Only when the user explicitly asks to move to a new chat: copy the file with the tool for this platform (`pbcopy < <file>` on macOS, `wl-copy < <file>` on Linux under Wayland) and make the first line `Handoff saved: [<file name>](<path>) · copied to clipboard. Open a new chat and paste (⌘V on macOS, Ctrl+V on Linux).` If the copy fails, or the platform has neither tool, say so and print the file's contents in a block fenced with four backticks (````text) instead.

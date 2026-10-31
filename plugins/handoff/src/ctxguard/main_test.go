@@ -84,16 +84,14 @@ func TestStatusline(t *testing.T) {
 	}{
 		{"green from current_usage", `{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/a/proj/"},"context_window":{"current_usage":{"input_tokens":5,"cache_read_input_tokens":42000}}}`,
 			"Opus · proj · " + green + "ctx 42k" + reset},
-		{"yellow from transcript", `{"model":{"display_name":"Opus"},"cwd":"/x/y","transcript_path":"` + tr + `"}`,
-			"Opus · y · " + yellow + "ctx 110k" + reset},
-		{"yellow from 100k", `{"cwd":"/x/y","context_window":{"current_usage":{"input_tokens":100000}}}`,
-			"y · " + yellow + "ctx 100k" + reset},
-		{"yellow just below main limit", `{"cwd":"/x/y","context_window":{"current_usage":{"input_tokens":` + below + `}}}`,
-			"y · " + yellow + "ctx " + fmt.Sprint((defaultMainLimit-1)/1000) + "k" + reset},
+		{"red from transcript", `{"model":{"display_name":"Opus"},"cwd":"/x/y","transcript_path":"` + tr + `"}`,
+			"Opus · y · " + red + "ctx 110k · handoff" + reset},
+		{"green just below main limit", `{"cwd":"/x/y","context_window":{"current_usage":{"input_tokens":` + below + `}}}`,
+			"y · " + green + "ctx " + fmt.Sprint((defaultMainLimit-1)/1000) + "k" + reset},
 		{"red handoff at main limit", `{"model":{"display_name":"Opus"},"cwd":"/x/y","context_window":{"current_usage":{"input_tokens":` + lim + `}}}`,
 			"Opus · y · " + red + "ctx " + limK + "k · handoff" + reset},
 		{"zero current_usage falls back to transcript", `{"cwd":"/x/y","transcript_path":"` + tr + `","context_window":{"current_usage":{"input_tokens":0}}}`,
-			"y · " + yellow + "ctx 110k" + reset},
+			"y · " + red + "ctx 110k · handoff" + reset},
 		{"workspace preferred over cwd", `{"workspace":{"current_dir":"/w/one"},"cwd":"/x/two"}`,
 			"one · " + dim + "ctx –" + reset},
 		{"unknown", `{"model":{"display_name":"Opus"},"cwd":"/x/y","transcript_path":"/nope"}`,
@@ -133,6 +131,13 @@ func setup(t *testing.T) (state string) {
 	t.Setenv("CTXGUARD_AGENT_LIMIT", "")
 	t.Setenv("CTXGUARD_MAIN_LIMIT", "")
 	t.Setenv("CTXGUARD_LOG", "")
+	t.Setenv("CTXGUARD_REAP", "")
+	t.Setenv("CTXGUARD_REAP_IDLE", "")
+	// Tests never list or signal real processes.
+	ps, sig := psSnapshot, signalTerm
+	t.Cleanup(func() { psSnapshot, signalTerm = ps, sig })
+	psSnapshot = func() (string, error) { return "", nil }
+	signalTerm = func(pid int) error { t.Fatalf("real signal to %d", pid); return nil }
 	return state
 }
 
@@ -207,8 +212,10 @@ func TestStop(t *testing.T) {
 	ev := func(sess, tr string, active bool) map[string]any {
 		return map[string]any{"hook_event_name": "Stop", "session_id": sess, "transcript_path": tr, "stop_hook_active": active}
 	}
-	wantReason := "Context is 120k (limit 115k). Run the handoff command now (/handoff:handoff from the plugin, or /handoff), even if agents or background work are still running: " +
-		"list them in the handoff as in flight with their ids/descriptions, and do not stop or wait for them. Then stop."
+	wantReason := "Context is 120k (limit 100k). Write or refresh the handoff file now (the handoff command, steps 1–4), " +
+		"listing running agents/background work as in flight with their output files. " +
+		"Do not stop, do not wait for them, and do not ask the user to open a new chat: " +
+		"then continue with Next in this chat — auto-compaction will re-inject the handoff."
 	cases := []struct {
 		name, sess, tr string
 		active, block  bool
@@ -262,11 +269,13 @@ func TestStopBlocksAgainAfterCompaction(t *testing.T) {
 		t.Fatalf("at limit should block: %v", m)
 	}
 	reason, _ := m["reason"].(string)
-	if !strings.Contains(reason, "/handoff") {
-		t.Fatalf("reason lacks /handoff: %q", reason)
+	if !strings.Contains(reason, "handoff command") || !strings.Contains(reason, "continue with Next in this chat") {
+		t.Fatalf("reason should ask for a handoff and to keep working: %q", reason)
 	}
-	if strings.Contains(reason, "tell the user what is pending and stop") {
-		t.Fatalf("reason still exempts running agents: %q", reason)
+	for _, bad := range []string{"tell the user what is pending and stop", "Then stop."} {
+		if strings.Contains(reason, bad) {
+			t.Fatalf("reason still says %q: %q", bad, reason)
+		}
 	}
 	if m := runHook(t, stopEv); m != nil {
 		t.Fatalf("second stop should not block (marker): %v", m)
@@ -286,6 +295,30 @@ func TestStopBlocksAgainAfterCompaction(t *testing.T) {
 }
 
 func TestSessionStartCompact(t *testing.T) {
+	testSessionStart(t, "compact", "Handoff written before this compaction (")
+}
+
+func TestSessionStartClear(t *testing.T) {
+	testSessionStart(t, "clear", "Handoff written before /clear (")
+}
+
+func TestStopBlocksAgainAfterClear(t *testing.T) {
+	state := setup(t)
+	tr := writeLines(t, filepath.Join(t.TempDir(), "at.jsonl"), asst(defaultMainLimit, false))
+	stopEv := map[string]any{"hook_event_name": "Stop", "session_id": "sc", "transcript_path": tr}
+	if m := runHook(t, stopEv); m["decision"] != "block" {
+		t.Fatalf("at limit should block: %v", m)
+	}
+	runHook(t, map[string]any{"hook_event_name": "SessionStart", "source": "clear", "session_id": "sc", "cwd": t.TempDir()})
+	if _, err := os.Stat(filepath.Join(state, "main-sc")); !os.IsNotExist(err) {
+		t.Fatalf("marker not removed on clear: %v", err)
+	}
+	if m := runHook(t, stopEv); m["decision"] != "block" {
+		t.Fatalf("stop after clear should block again: %v", m)
+	}
+}
+
+func testSessionStart(t *testing.T, source, header string) {
 	state := setup(t)
 	cwd := t.TempDir()
 	hd := filepath.Join(cwd, ".claude", "handoffs")
@@ -306,10 +339,10 @@ func TestSessionStartCompact(t *testing.T) {
 	marker := filepath.Join(state, "main-sess")
 	os.WriteFile(marker, nil, 0o644)
 
-	ev := map[string]any{"hook_event_name": "SessionStart", "source": "compact", "session_id": "sess", "cwd": cwd}
+	ev := map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": "sess", "cwd": cwd}
 	m := runHook(t, ev)
 	got := additional(m)
-	prefix := "Handoff written before this compaction (" + want + ") — treat it as the authoritative state:\n\n"
+	prefix := header + want + ") — treat it as the authoritative state:\n\n"
 	if !strings.HasPrefix(got, prefix) {
 		t.Fatalf("got prefix %q", got[:min(len(got), 200)])
 	}
@@ -328,7 +361,8 @@ func TestSessionStartCompact(t *testing.T) {
 		ev   map[string]any
 	}{
 		{"startup ignored", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "sess", "cwd": cwd}},
-		{"no recent handoff", map[string]any{"hook_event_name": "SessionStart", "source": "compact", "session_id": "sess", "cwd": t.TempDir()}},
+		{"resume ignored", map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "sess", "cwd": cwd}},
+		{"no recent handoff", map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": "sess", "cwd": t.TempDir()}},
 		{"other event", map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "sess", "cwd": cwd}},
 	}
 	for _, tc := range cases {
