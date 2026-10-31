@@ -245,6 +245,64 @@ func TestStop(t *testing.T) {
 	}
 }
 
+func launch(id string, sidechain bool) string {
+	return fmt.Sprintf(`{"type":"user","isSidechain":%t,"message":{"role":"user","content":[{"type":"tool_result","content":"Async agent launched successfully."}]},"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":%q,"description":"do %s"}}`, sidechain, id, id)
+}
+
+func notify(id, typ string) string {
+	return fmt.Sprintf(`{"type":%q,"isSidechain":false,"content":"<task-notification>\n<task-id>%s</task-id>\n<status>completed</status>\n</task-notification>"}`, typ, id)
+}
+
+func TestRunningAgents(t *testing.T) {
+	cases := []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"none", []string{asst(1000, false)}, ""},
+		{"launched, not notified", []string{launch("a1", false), asst(1000, false)}, "a1:do a1"},
+		{"notified", []string{launch("a1", false), notify("a1", "attachment")}, ""},
+		{"queued only still running", []string{launch("a1", false), notify("a1", "queue-operation")}, "a1:do a1"},
+		{"sidechain launch ignored", []string{launch("a1", true)}, ""},
+		{"one of two done", []string{launch("a1", false), launch("a2", false), notify("a1", "attachment")}, "a2:do a2"},
+		{"launch far behind the tail", append([]string{launch("a1", false)}, padLines(4200<<10)...), "a1:do a1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeLines(t, filepath.Join(t.TempDir(), "t.jsonl"), tc.lines...)
+			agents, err := runningAgents(p)
+			var got []string
+			for _, a := range agents {
+				got = append(got, a.ID+":"+a.Description)
+			}
+			if err != nil || strings.Join(got, ",") != tc.want {
+				t.Fatalf("got (%v,%v) want %q", agents, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunningAgentString(t *testing.T) {
+	if got := (runningAgent{ID: "a1"}).String(); got != "a1" {
+		t.Fatalf("empty description: got %q", got)
+	}
+	if got := (runningAgent{ID: "a1", Description: "do a1"}).String(); got != "a1 (do a1)" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestStopListsRunningAgents(t *testing.T) {
+	setup(t)
+	tr := writeLines(t, filepath.Join(t.TempDir(), "t.jsonl"),
+		launch("a1", false), launch("a2", false), launch("a3", false), notify("a2", "attachment"), asst(120400, false))
+	m := runHook(t, map[string]any{"hook_event_name": "Stop", "session_id": "sl", "transcript_path": tr})
+	reason, _ := m["reason"].(string)
+	want := " Running agents (launched, no result yet): a1 (do a1), a3 (do a3)."
+	if m["decision"] != "block" || !strings.HasSuffix(reason, want) {
+		t.Fatalf("running agents should be listed after the reason: %v", m)
+	}
+}
+
 // observedCompactAt was measured 2026-10-20 from ~/.claude/state/ctxguard/log.jsonl:
 // compaction fires after Stop readings of ~129–137k under autoCompactWindow 170000.
 const observedCompactAt = 137000
@@ -356,12 +414,13 @@ func testSessionStart(t *testing.T, source, header string) {
 		t.Fatalf("marker not reset: %v", err)
 	}
 
+	tr := writeLines(t, filepath.Join(t.TempDir(), "t.jsonl"), launch("a1", false))
 	cases := []struct {
 		name string
 		ev   map[string]any
 	}{
-		{"startup ignored", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "sess", "cwd": cwd}},
-		{"resume ignored", map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "sess", "cwd": cwd}},
+		{"startup ignored", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "sess", "cwd": cwd, "transcript_path": tr}},
+		{"resume ignored", map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "sess", "cwd": cwd, "transcript_path": tr}},
 		{"no recent handoff", map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": "sess", "cwd": t.TempDir()}},
 		{"other event", map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "sess", "cwd": cwd}},
 	}
@@ -371,6 +430,48 @@ func testSessionStart(t *testing.T, source, header string) {
 				t.Fatalf("unexpected output %v", m)
 			}
 		})
+	}
+}
+
+func TestSessionStartRunningAgents(t *testing.T) {
+	setup(t)
+	cwd := t.TempDir()
+	hp := writeLines(t, filepath.Join(cwd, ".claude", "handoffs", "main-1.md"), "state")
+	tr := writeLines(t, filepath.Join(t.TempDir(), "t.jsonl"), launch("a1", false), launch("a2", false), notify("a1", "attachment"))
+	ev := func(source, cwd string) map[string]any {
+		return map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": "sr", "cwd": cwd, "transcript_path": tr}
+	}
+
+	got := additional(runHook(t, ev("compact", cwd)))
+	want := "Handoff written before this compaction (" + hp + ") — treat it as the authoritative state:\n\nstate\n" +
+		"\n\nStill running from before this compaction (launched, no result yet; their notifications still arrive):\n- a2 (do a2)"
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+
+	got = additional(runHook(t, ev("compact", t.TempDir())))
+	want = "Still running from before this compaction (launched, no result yet; their notifications still arrive):\n- a2 (do a2)"
+	if got != want {
+		t.Fatalf("without a handoff, only the list: got %q", got)
+	}
+
+	got = additional(runHook(t, ev("clear", cwd)))
+	want = "Handoff written before /clear (" + hp + ") — treat it as the authoritative state:\n\nstate\n"
+	if got != want {
+		t.Fatalf("/clear injects the handoff without a list: got %q", got)
+	}
+	if m := runHook(t, ev("clear", t.TempDir())); m != nil {
+		t.Fatalf("/clear without a handoff should output nothing: %v", m)
+	}
+
+	var lines []string
+	for i := range 23 {
+		lines = append(lines, launch(fmt.Sprintf("b%02d", i), false))
+	}
+	writeLines(t, tr, lines...)
+	got = additional(runHook(t, ev("compact", t.TempDir())))
+	if !strings.HasSuffix(got, "\n- b19 (do b19)\n… and 3 more") || strings.Contains(got, "b20") {
+		t.Fatalf("list should stop at 20 entries: %q", got)
 	}
 }
 

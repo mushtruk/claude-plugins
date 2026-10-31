@@ -11,7 +11,7 @@ allowed-tools: Bash(git branch:*), Bash(git status:*), Bash(git log:*), Bash(git
 $ARGUMENTS: if given, weight the handoff toward this.
 
 ## 1. Settle, before writing
-- **Running work** (agents, workflows, background shells, watchers) survives compaction. Do not stop it and do not wait for it. List each one as in flight with its id/description and the file its result lands in, so after compaction a missing notification costs one file read.
+- **Running work** (agents, workflows, background shells, watchers) survives compaction. Do not stop it and do not wait for it. List each one as in flight with its id/description and the file its result lands in (the Stop message and the post-compaction context list the agents the transcript shows still running, so use that list), so after compaction a missing notification costs one file read.
 - **Durable facts** (user decisions and preferences, rules, findings that outlive the next piece): write them to memory or the plan doc now, following your memory rules. The handoff points to them; it is not storage.
 
 ## 2. Gather, in every repo this session touched

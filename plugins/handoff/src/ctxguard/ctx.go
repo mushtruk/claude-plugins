@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -96,4 +97,90 @@ func scanTail(f io.ReaderAt, size, tail int64, skipSidechain bool) (int, bool) {
 		return usageTokens(r.Message.Usage), true
 	}
 	return 0, false
+}
+
+var (
+	launchKey   = []byte(`"async_launched"`)
+	notifyKey   = []byte(`<task-notification>`)
+	queueOpKey  = []byte(`"type":"queue-operation"`)
+	taskIDOpen  = []byte(`<task-id>`)
+	taskIDClose = []byte(`</task-id>`)
+)
+
+type runningAgent struct {
+	ID, Description string
+}
+
+func (a runningAgent) String() string {
+	if a.Description == "" {
+		return a.ID
+	}
+	return a.ID + " (" + a.Description + ")"
+}
+
+type launchRecord struct {
+	Type          string `json:"type"`
+	IsSidechain   bool   `json:"isSidechain"`
+	ToolUseResult *struct {
+		Status      string `json:"status"`
+		AgentID     string `json:"agentId"`
+		Description string `json:"description"`
+	} `json:"toolUseResult"`
+}
+
+// runningAgents returns the background agents the main thread launched and
+// has not yet received a task-notification for, in launch order. The whole
+// file is read: a launch can be far behind the tail.
+func runningAgents(path string) ([]runningAgent, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	running := map[string]string{}
+	var order []string
+	r := bufio.NewReaderSize(f, 1<<20)
+	for {
+		line, err := r.ReadBytes('\n')
+		switch {
+		case bytes.Contains(line, launchKey):
+			var rec launchRecord
+			if json.Unmarshal(line, &rec) == nil && rec.Type == "user" && !rec.IsSidechain &&
+				rec.ToolUseResult != nil && rec.ToolUseResult.Status == "async_launched" && rec.ToolUseResult.AgentID != "" {
+				id := rec.ToolUseResult.AgentID
+				if _, ok := running[id]; !ok {
+					order = append(order, id)
+				}
+				running[id] = rec.ToolUseResult.Description
+			}
+		case bytes.Contains(line, notifyKey) && !bytes.Contains(line, queueOpKey):
+			// Only the delivered notification counts, not the queue entry.
+			for rest := line; ; {
+				i := bytes.Index(rest, taskIDOpen)
+				if i < 0 {
+					break
+				}
+				rest = rest[i+len(taskIDOpen):]
+				j := bytes.Index(rest, taskIDClose)
+				if j < 0 {
+					break
+				}
+				delete(running, string(rest[:j]))
+				rest = rest[j:]
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var agents []runningAgent
+	for _, id := range order {
+		if desc, ok := running[id]; ok {
+			agents = append(agents, runningAgent{id, desc})
+		}
+	}
+	return agents, nil
 }

@@ -25,6 +25,7 @@ const (
 	defaultMainLimit  = 100000 // well under the observed compaction point; see TestMainLimitBelowObservedCompaction
 	handoffMaxAge     = 3 * time.Hour
 	handoffMaxChars   = 9500
+	maxListedAgents   = 20
 
 	green  = "\033[32m"
 	yellow = "\033[33m"
@@ -208,22 +209,29 @@ func stop(h hookInput) (any, string) {
 	if !createMarker("main-" + h.SessionID) {
 		return nil, fmt.Sprintf("main-already-blocked %d", n)
 	}
-	return map[string]any{
-		"decision": "block",
-		"reason": fmt.Sprintf("Context is %dk (limit %dk). Write or refresh the handoff file now (the handoff command, steps 1–4), "+
-			"listing running agents/background work as in flight with their output files. "+
-			"Do not stop, do not wait for them, and do not ask the user to open a new chat: "+
-			"then continue with Next in this chat — auto-compaction will re-inject the handoff.", n/1000, limit/1000),
-	}, fmt.Sprintf("main-blocked %d", n)
+	reason := fmt.Sprintf("Context is %dk (limit %dk). Write or refresh the handoff file now (the handoff command, steps 1–4), "+
+		"listing running agents/background work as in flight with their output files. "+
+		"Do not stop, do not wait for them, and do not ask the user to open a new chat: "+
+		"then continue with Next in this chat — auto-compaction will re-inject the handoff.", n/1000, limit/1000)
+	decision := fmt.Sprintf("main-blocked %d", n)
+	if agents, err := runningAgents(h.TranscriptPath); err == nil && len(agents) > 0 {
+		names := make([]string, len(agents))
+		for i, a := range agents {
+			names[i] = a.String()
+		}
+		reason += " Running agents (launched, no result yet): " + strings.Join(names, ", ") + "."
+		decision += fmt.Sprintf(" running=%d", len(agents))
+	}
+	return map[string]any{"decision": "block", "reason": reason}, decision
 }
 
 func sessionStart(h hookInput) (any, string) {
-	var header string
+	var before string
 	switch h.Source {
 	case "compact":
-		header = "Handoff written before this compaction ("
+		before = "this compaction"
 	case "clear":
-		header = "Handoff written before /clear ("
+		before = "/clear"
 	default:
 		return nil, "not-compact"
 	}
@@ -234,22 +242,56 @@ func sessionStart(h hookInput) (any, string) {
 			_ = os.Remove(filepath.Join(dir, "main-"+h.SessionID)) // not-exist is fine
 		}
 	}
-	if h.Cwd == "" {
-		return nil, "no-cwd"
+	var sections []string
+	section, decision := handoffSection(h.Cwd, before)
+	if section != "" {
+		sections = append(sections, section)
 	}
-	path, ok := newestHandoff(filepath.Join(h.Cwd, ".claude", "handoffs"), time.Now())
+	// The transcript outlives a compaction, so launches from before it are still
+	// there; /clear starts a new transcript, so it has none to list.
+	if h.Source == "compact" {
+		if agents, err := runningAgents(h.TranscriptPath); err == nil && len(agents) > 0 {
+			sections = append(sections, runningSection(agents))
+			decision += fmt.Sprintf(" running=%d", len(agents))
+		}
+	}
+	if len(sections) == 0 {
+		return nil, decision
+	}
+	return map[string]any{"hookSpecificOutput": map[string]any{
+		"hookEventName":     "SessionStart",
+		"additionalContext": strings.Join(sections, "\n\n"),
+	}}, decision
+}
+
+// handoffSection returns the newest recent handoff under cwd as context ("" if
+// none) and the decision to log.
+func handoffSection(cwd, before string) (string, string) {
+	if cwd == "" {
+		return "", "no-cwd"
+	}
+	path, ok := newestHandoff(filepath.Join(cwd, ".claude", "handoffs"), time.Now())
 	if !ok {
-		return nil, "no-handoff"
+		return "", "no-handoff"
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, "handoff-unreadable"
+		return "", "handoff-unreadable"
 	}
-	return map[string]any{"hookSpecificOutput": map[string]any{
-		"hookEventName": "SessionStart",
-		"additionalContext": header + path + ") — treat it as the authoritative state:\n\n" +
-			truncateRunes(string(content), handoffMaxChars),
-	}}, "handoff " + path
+	return "Handoff written before " + before + " (" + path + ") — treat it as the authoritative state:\n\n" +
+		truncateRunes(string(content), handoffMaxChars), "handoff " + path
+}
+
+func runningSection(agents []runningAgent) string {
+	var b strings.Builder
+	b.WriteString("Still running from before this compaction (launched, no result yet; their notifications still arrive):")
+	for _, a := range agents[:min(len(agents), maxListedAgents)] {
+		b.WriteString("\n- " + a.String())
+	}
+	if extra := len(agents) - maxListedAgents; extra > 0 {
+		fmt.Fprintf(&b, "\n… and %d more", extra)
+	}
+	return b.String()
 }
 
 func newestHandoff(dir string, now time.Time) (string, bool) {
