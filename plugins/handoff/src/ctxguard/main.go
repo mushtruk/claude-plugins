@@ -271,6 +271,13 @@ func stop(h hookInput) (any, string) {
 		reason += " Running agents (launched, no result yet): " + strings.Join(names, ", ") + "."
 		decision += fmt.Sprintf(" running=%d", len(agents))
 	}
+	// Only a main-thread Write or Edit records the handoff; a Bash-written
+	// file is silently not re-injected.
+	if path, _ := sessionHandoff(h); path != "" {
+		reason += "\nRecorded handoff: " + path
+	} else {
+		reason += "\nNo handoff recorded for this session: write it with the Write tool (a Bash-written file is not re-injected)."
+	}
 	return map[string]any{"decision": "block", "reason": reason}, decision
 }
 

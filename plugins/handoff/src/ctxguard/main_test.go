@@ -215,7 +215,8 @@ func TestStop(t *testing.T) {
 	wantReason := "Context is 120k (limit 100k). Write or refresh the handoff file now (the handoff command, steps 1–4), " +
 		"listing running agents/background work as in flight with their output files. " +
 		"Do not stop, do not wait for them, and do not ask the user to open a new chat: " +
-		"then continue with Next in this chat — auto-compaction will re-inject the handoff."
+		"then continue with Next in this chat — auto-compaction will re-inject the handoff." +
+		"\nNo handoff recorded for this session: write it with the Write tool (a Bash-written file is not re-injected)."
 	cases := []struct {
 		name, sess, tr string
 		active, block  bool
@@ -297,9 +298,38 @@ func TestStopListsRunningAgents(t *testing.T) {
 		launch("a1", false), launch("a2", false), launch("a3", false), notify("a2", "attachment"), asst(120400, false))
 	m := runHook(t, map[string]any{"hook_event_name": "Stop", "session_id": "sl", "transcript_path": tr})
 	reason, _ := m["reason"].(string)
-	want := " Running agents (launched, no result yet): a1 (do a1), a3 (do a3)."
-	if m["decision"] != "block" || !strings.HasSuffix(reason, want) {
+	want := " Running agents (launched, no result yet): a1 (do a1), a3 (do a3).\n"
+	if m["decision"] != "block" || !strings.Contains(reason, want) {
 		t.Fatalf("running agents should be listed after the reason: %v", m)
+	}
+}
+
+func TestStopNamesRecordedHandoff(t *testing.T) {
+	cases := []struct {
+		name   string
+		record bool
+		want   func(path string) string
+	}{
+		{"recorded handoff", true, func(path string) string { return "\nRecorded handoff: " + path }},
+		{"no recorded handoff", false, func(string) string {
+			return "\nNo handoff recorded for this session: write it with the Write tool (a Bash-written file is not re-injected)."
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setup(t)
+			cwd := t.TempDir()
+			path := writeLines(t, filepath.Join(cwd, ".claude", "handoffs", "main-own.md"), "own")
+			if tc.record {
+				runHook(t, writeEvent("sh", cwd, "Write", path))
+			}
+			tr := writeLines(t, filepath.Join(t.TempDir(), "t.jsonl"), asst(120400, false))
+			m := runHook(t, map[string]any{"hook_event_name": "Stop", "session_id": "sh", "transcript_path": tr})
+			reason, _ := m["reason"].(string)
+			if m["decision"] != "block" || !strings.HasSuffix(reason, tc.want(path)) {
+				t.Fatalf("want reason ending %q, got %v", tc.want(path), m)
+			}
+		})
 	}
 }
 
