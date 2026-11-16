@@ -32,6 +32,7 @@ Every call re-reads everything already in your context, so a file read early cos
 - Run the narrowest check (`go test ./pkg/ -run TestX`, one test file). Run the wider suite once, at the end, if the task asks for it. Don't re-run what already passed.
 - If the task keeps pulling in more code than its touch points suggested, stop and report DONE_WITH_CONCERNS or NEEDS_CONTEXT with what you found, rather than exploring on.
 - You are not a census or research agent. If the prompt asks you to survey a codebase or write a plan, do the minimum and say that work belongs to a census.
+- If the brief or handoff gives a design, implement it. If after reading the position map the design is still unsettled, return NEEDS_CONTEXT with the open question rather than surveying further; a survey that fills the context with no code written is the failure to avoid.
 - When you receive "CONTEXT LIMIT", finish the step you are on and don't start a new one. Then write a handoff to the file the brief names, or else `<repo>/.claude/handoffs/agent-<task-slug>-<n>.md`. It is plain text, at most 400 words, and is the next agent's whole survey:
   - **Position map**: one line per place still to read or change, `path:line symbol: what is there / what is left`. Include the anchors you found by searching, so nobody searches again.
   - Steps done, each with its verification (command + pass/fail); uncommitted files.
