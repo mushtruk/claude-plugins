@@ -32,7 +32,7 @@ Check every file:line, symbol, hash, path, command and number before it goes in,
 ## 4. Write it to a file
 Save to `<primary repo>/.claude/handoffs/<YYYY-MM-DD-HHMM>-<slug>.md`, where the primary repo is the chat's working directory and the slug is 2–4 words of the title. Keep `.claude/handoffs/` out of git (a global gitignore entry; see the plugin README). Write plain text in this shape: no outer fence, inner code fences are fine. A long session needs about 600–900 words, a short one a few lines. Omit empty sections.
 
-**Running log.** After the first handoff in this chat, keep that same file current with small edits at each milestone (a task frozen, a decision made, an agent dispatched or finished) instead of re-gathering everything into a new one.
+**Running log.** After the first handoff in this chat, keep that same file current at each milestone (a task frozen, a decision made, an agent dispatched or finished) instead of re-gathering everything into a new one. Edit the sections in place: replace the header line, In progress and Next; move a finished item into Done as one line with its commit; add a new decision to Not in the code. Never append dated log lines at the end. The file is re-injected after every compaction, so it must describe the current state, not the history. Keep it under ~900 words: once a piece is complete, collapse its Done lines into one line naming its commit range.
 
 ```text
 Handoff: <title> · <YYYY-MM-DD>
