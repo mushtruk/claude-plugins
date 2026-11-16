@@ -390,14 +390,21 @@ func testSessionStart(t *testing.T, source, header string) {
 	}
 	write("old.md", "old", 4*time.Hour)
 	write("agent-x-1.md", "agent newest", 0)
-	want := write("main-2.md", strings.Repeat("é", 10000), time.Minute)
-	write("main-1.md", "older", 10*time.Minute)
+	want := write("main-2.md", strings.Repeat("é", 10000), 10*time.Minute)
+	other := write("main-1.md", "another chat", time.Minute)
+	runHook(t, writeEvent("sess", cwd, "Write", want))
+	runHook(t, writeEvent("other", cwd, "Write", other))
 
+	started := "sess"
+	if source == "clear" {
+		runHook(t, endEvent("sess", "clear", cwd))
+		started = "fresh"
+	}
 	os.MkdirAll(state, 0o755)
-	marker := filepath.Join(state, "main-sess")
+	marker := filepath.Join(state, "main-"+started)
 	os.WriteFile(marker, nil, 0o644)
 
-	ev := map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": "sess", "cwd": cwd}
+	ev := map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": started, "cwd": cwd}
 	m := runHook(t, ev)
 	got := additional(m)
 	prefix := header + want + ") — treat it as the authoritative state:\n\n"
@@ -421,7 +428,7 @@ func testSessionStart(t *testing.T, source, header string) {
 	}{
 		{"startup ignored", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "sess", "cwd": cwd, "transcript_path": tr}},
 		{"resume ignored", map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "sess", "cwd": cwd, "transcript_path": tr}},
-		{"no recent handoff", map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": "sess", "cwd": t.TempDir()}},
+		{"no session handoff", map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": "nobody", "cwd": t.TempDir()}},
 		{"other event", map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "sess", "cwd": cwd}},
 	}
 	for _, tc := range cases {
@@ -433,35 +440,132 @@ func testSessionStart(t *testing.T, source, header string) {
 	}
 }
 
+func writeEvent(session, cwd, tool, path string) map[string]any {
+	return map[string]any{"hook_event_name": "PostToolUse", "session_id": session, "cwd": cwd,
+		"tool_name": tool, "tool_input": map[string]any{"file_path": path, "content": "x"}}
+}
+
+func endEvent(session, reason, cwd string) map[string]any {
+	return map[string]any{"hook_event_name": "SessionEnd", "session_id": session, "reason": reason, "cwd": cwd}
+}
+
+func TestSessionHandoffOwnership(t *testing.T) {
+	type write struct{ session, tool, file string }
+	cases := []struct {
+		name      string
+		writes    []write
+		end       []string // session, reason of a SessionEnd in cwd
+		source    string
+		session   string
+		elsewhere bool // start in another cwd
+		want      string
+	}{
+		{"own handoff beats a newer one from another chat", []write{{"sess", "Write", "own"}, {"other", "Write", "other"}}, nil, "compact", "sess", false, "own"},
+		{"no record means no handoff", []write{{"other", "Write", "other"}}, nil, "compact", "sess", false, ""},
+		{"agent handoff never recorded", []write{{"sess", "Write", "agent"}}, nil, "compact", "sess", false, ""},
+		{"write outside the handoffs dir not recorded", []write{{"sess", "Write", "outside"}, {"sess", "Write", "nested"}}, nil, "compact", "sess", false, ""},
+		{"read is not recorded", []write{{"sess", "Read", "own"}}, nil, "compact", "sess", false, ""},
+		{"edit records", []write{{"sess", "Edit", "own"}}, nil, "compact", "sess", false, "own"},
+		{"latest write wins", []write{{"sess", "Write", "other"}, {"sess", "Edit", "own"}}, nil, "compact", "sess", false, "own"},
+		{"stale own handoff skipped", []write{{"sess", "Write", "stale"}}, nil, "compact", "sess", false, ""},
+		{"/clear picks the cleared session's handoff", []write{{"sess", "Write", "own"}, {"other", "Write", "other"}}, []string{"sess", "clear"}, "clear", "fresh", false, "own"},
+		{"/clear without a cleared session", []write{{"sess", "Write", "own"}}, nil, "clear", "fresh", false, ""},
+		{"session end for another reason", []write{{"sess", "Write", "own"}}, []string{"sess", "logout"}, "clear", "fresh", false, ""},
+		{"/clear in another cwd", []write{{"sess", "Write", "own"}}, []string{"sess", "clear"}, "clear", "fresh", true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setup(t)
+			cwd := t.TempDir()
+			hd := filepath.Join(cwd, ".claude", "handoffs")
+			now := time.Now()
+			files := map[string]string{}
+			for name, f := range map[string]struct {
+				path string
+				age  time.Duration
+			}{
+				"own":     {filepath.Join(hd, "main-own.md"), 10 * time.Minute},
+				"other":   {filepath.Join(hd, "main-other.md"), time.Minute},
+				"agent":   {filepath.Join(hd, "agent-sess-1.md"), 0},
+				"stale":   {filepath.Join(hd, "main-stale.md"), 4 * time.Hour},
+				"outside": {filepath.Join(cwd, "notes.md"), 0},
+				"nested":  {filepath.Join(hd, "sub", "main-x.md"), 0},
+			} {
+				files[name] = writeLines(t, f.path, name)
+				if err := os.Chtimes(f.path, now.Add(-f.age), now.Add(-f.age)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, w := range tc.writes {
+				runHook(t, writeEvent(w.session, cwd, w.tool, files[w.file]))
+			}
+			if tc.end != nil {
+				runHook(t, endEvent(tc.end[0], tc.end[1], cwd))
+			}
+			startCwd := cwd
+			if tc.elsewhere {
+				startCwd = t.TempDir()
+			}
+			got := additional(runHook(t, map[string]any{"hook_event_name": "SessionStart", "source": tc.source, "session_id": tc.session, "cwd": startCwd}))
+			if tc.want == "" {
+				if got != "" {
+					t.Fatalf("want no handoff, got %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, "("+files[tc.want]+")") || !strings.HasSuffix(got, "\n\n"+tc.want+"\n") {
+				t.Fatalf("want %s, got %q", files[tc.want], got)
+			}
+		})
+	}
+}
+
+func TestClearMappingUsedOnce(t *testing.T) {
+	setup(t)
+	cwd := t.TempDir()
+	hp := writeLines(t, filepath.Join(cwd, ".claude", "handoffs", "main-1.md"), "state")
+	runHook(t, writeEvent("sess", cwd, "Write", hp))
+	runHook(t, endEvent("sess", "clear", cwd))
+	start := map[string]any{"hook_event_name": "SessionStart", "source": "clear", "session_id": "fresh", "cwd": cwd}
+	if got := additional(runHook(t, start)); !strings.Contains(got, hp) {
+		t.Fatalf("first /clear start should inject %s: %q", hp, got)
+	}
+	if m := runHook(t, start); m != nil {
+		t.Fatalf("mapping should be removed after use: %v", m)
+	}
+}
+
 func TestSessionStartRunningAgents(t *testing.T) {
 	setup(t)
 	cwd := t.TempDir()
 	hp := writeLines(t, filepath.Join(cwd, ".claude", "handoffs", "main-1.md"), "state")
+	runHook(t, writeEvent("sr", cwd, "Write", hp))
 	tr := writeLines(t, filepath.Join(t.TempDir(), "t.jsonl"), launch("a1", false), launch("a2", false), notify("a1", "attachment"))
-	ev := func(source, cwd string) map[string]any {
-		return map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": "sr", "cwd": cwd, "transcript_path": tr}
+	ev := func(source, session string) map[string]any {
+		return map[string]any{"hook_event_name": "SessionStart", "source": source, "session_id": session, "cwd": cwd, "transcript_path": tr}
 	}
 
-	got := additional(runHook(t, ev("compact", cwd)))
+	got := additional(runHook(t, ev("compact", "sr")))
 	want := "Handoff written before this compaction (" + hp + ") — treat it as the authoritative state:\n\nstate\n" +
 		"\n\nStill running from before this compaction (launched, no result yet; their notifications still arrive):\n- a2 (do a2)"
 	if got != want {
 		t.Fatalf("got %q\nwant %q", got, want)
 	}
 
-	got = additional(runHook(t, ev("compact", t.TempDir())))
+	got = additional(runHook(t, ev("compact", "no-handoff")))
 	want = "Still running from before this compaction (launched, no result yet; their notifications still arrive):\n- a2 (do a2)"
 	if got != want {
 		t.Fatalf("without a handoff, only the list: got %q", got)
 	}
 
-	got = additional(runHook(t, ev("clear", cwd)))
+	runHook(t, endEvent("sr", "clear", cwd))
+	got = additional(runHook(t, ev("clear", "fresh")))
 	want = "Handoff written before /clear (" + hp + ") — treat it as the authoritative state:\n\nstate\n"
 	if got != want {
 		t.Fatalf("/clear injects the handoff without a list: got %q", got)
 	}
-	if m := runHook(t, ev("clear", t.TempDir())); m != nil {
-		t.Fatalf("/clear without a handoff should output nothing: %v", m)
+	if m := runHook(t, ev("clear", "fresh")); m != nil {
+		t.Fatalf("a second /clear start has no cleared session to load: %v", m)
 	}
 
 	var lines []string
@@ -469,7 +573,7 @@ func TestSessionStartRunningAgents(t *testing.T) {
 		lines = append(lines, launch(fmt.Sprintf("b%02d", i), false))
 	}
 	writeLines(t, tr, lines...)
-	got = additional(runHook(t, ev("compact", t.TempDir())))
+	got = additional(runHook(t, ev("compact", "no-handoff")))
 	if !strings.HasSuffix(got, "\n- b19 (do b19)\n… and 3 more") || strings.Contains(got, "b20") {
 		t.Fatalf("list should stop at 20 entries: %q", got)
 	}

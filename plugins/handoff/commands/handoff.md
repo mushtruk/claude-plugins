@@ -65,7 +65,7 @@ Before saving, check:
 - No secrets, no file dumps, no relative dates.
 
 ## 5. Deliver
-By default, do not copy anything and do not ask for a new chat: the work continues here, and compaction (or a `/clear`) re-injects the newest handoff. Reply with only these lines, then carry on with Next:
+By default, do not copy anything and do not ask for a new chat: the work continues here, and compaction (or a `/clear`) re-injects the handoff this session wrote. Reply with only these lines, then carry on with Next:
 
 ```text
 Handoff saved: [<file name>](<path>) · continuing here; compaction re-injects it.

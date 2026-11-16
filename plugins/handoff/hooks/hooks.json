@@ -1,5 +1,5 @@
 {
-  "description": "Context guard: tells a subagent to hand off at 120k tokens, and the main thread at 100k (before compaction, which fires around 130-137k); after a compaction, loads the newest handoff.",
+  "description": "Context guard: tells a subagent to hand off at 120k tokens, and the main thread at 100k (before compaction, which fires around 130-137k); after a compaction or /clear, loads the handoff the continued session wrote.",
   "hooks": {
     "PostToolUse": [
       {"matcher": "*", "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/ctxguard\" hook", "timeout": 5}]}
@@ -9,6 +9,9 @@
     ],
     "SessionStart": [
       {"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/ctxguard\" hook", "timeout": 5}]}
+    ],
+    "SessionEnd": [
+      {"matcher": "clear", "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/ctxguard\" hook", "timeout": 5}]}
     ]
   }
 }

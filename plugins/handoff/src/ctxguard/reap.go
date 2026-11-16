@@ -107,11 +107,35 @@ func reap(self string, dryRun bool) (vs []verdict, enabled bool, err error) {
 	if !enabled || err != nil {
 		return nil, enabled, err
 	}
+	if !dryRun {
+		if dir, err := stateDir(); err == nil {
+			r.pruneState(dir)
+		}
+	}
 	snap, err := psSnapshot()
 	if err != nil {
 		return nil, true, err
 	}
 	return r.run(snap, dryRun), true, nil
+}
+
+// pruneState removes handoff records and /clear mappings left idle as long as
+// a reaped session.
+func (r reaper) pruneState(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, handoffStatePrefix) && !strings.HasPrefix(name, clearStatePrefix) {
+			continue
+		}
+		p := filepath.Join(dir, name)
+		if mod, err := r.modTime(p); err == nil && r.now().Sub(mod) > r.idle {
+			_ = os.Remove(p) // a concurrent removal is fine
+		}
+	}
 }
 
 // run returns a verdict for every process whose command line holds a Claude

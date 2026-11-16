@@ -260,6 +260,45 @@ func TestHookReapsOnSessionStart(t *testing.T) {
 	})
 }
 
+func TestReapPrunesIdleHandoffState(t *testing.T) {
+	state := setup(t)
+	hookHome(t)
+	now := time.Now()
+	idle := now.Add(-defaultReapIdle - time.Hour)
+	mk := func(name string, mod time.Time) string {
+		p := writeLines(t, filepath.Join(state, name), "x")
+		if err := os.Chtimes(p, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	idleHandoff := mk("handoff-"+sessA, idle)
+	idleClear := mk("clear-0123abcd", idle)
+	freshHandoff := mk("handoff-"+sessB, now)
+	freshClear := mk("clear-4567abcd", now)
+	otherMarker := mk("agent-x", idle)
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+
+	var out, errOut bytes.Buffer
+	if code := reapMain([]string{"--dry-run"}, &out, &errOut); code != 0 {
+		t.Fatalf("dry run: code %d err %q", code, errOut.String())
+	}
+	if !exists(idleHandoff) || !exists(idleClear) {
+		t.Fatal("dry run removed state")
+	}
+	runHook(t, map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": sessB})
+	for _, p := range []string{idleHandoff, idleClear} {
+		if exists(p) {
+			t.Fatalf("idle state %s not pruned", p)
+		}
+	}
+	for _, p := range []string{freshHandoff, freshClear, otherMarker} {
+		if !exists(p) {
+			t.Fatalf("%s pruned", p)
+		}
+	}
+}
+
 func TestHookReapErrorKeepsOutput(t *testing.T) {
 	for name, ps := range map[string]func() (string, error){
 		"error": func() (string, error) { return "", errors.New("ps exploded") },
@@ -270,7 +309,8 @@ func TestHookReapErrorKeepsOutput(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "log")
 			t.Setenv("CTXGUARD_LOG", log)
 			cwd := t.TempDir()
-			writeLines(t, filepath.Join(cwd, ".claude", "handoffs", "main-1.md"), "state")
+			hp := writeLines(t, filepath.Join(cwd, ".claude", "handoffs", "main-1.md"), "state")
+			runHook(t, writeEvent(sessB, cwd, "Write", hp))
 			ev := map[string]any{"hook_event_name": "SessionStart", "source": "compact", "session_id": sessB, "cwd": cwd}
 
 			t.Setenv("CTXGUARD_REAP", "0")
