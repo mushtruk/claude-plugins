@@ -15,10 +15,10 @@ Long sessions lose track once the context fills up and gets compacted. This plug
 
 | Piece | What it does |
 |---|---|
-| `/handoff:handoff [focus]` | Writes `<repo>/.claude/handoffs/<YYYY-MM-DD-HHMM>-<slug>.md` (state, next step, open questions, a kickoff paragraph) and keeps working in the same chat; compaction re-injects it. Only when you ask for a new chat does it copy the file to the clipboard (`pbcopy` on macOS, `wl-copy` on Wayland; elsewhere it prints the text instead) for you to paste. |
-| Stop hook | When the main thread ends a turn at 100k+ tokens, it blocks once and asks Claude to write or refresh the handoff file, listing running subagents and background work as in flight with their output files (the message names the agents the transcript shows as launched with no result yet), then to keep working in the same chat: no stopping, no waiting, no "open a new chat". A compaction or `/clear` re-arms it. |
-| PostToolUse hook | When a subagent passes 120k tokens, it tells it once to finish its step and hand off. |
-| SessionStart hook | After a compaction or a `/clear`, it injects the newest handoff from the last 3 hours (agent-* files skipped) into the new context; after a compaction it follows with the agents still running from before it (up to 20). On every session start it also reaps orphaned background processes (below). |
+| `/handoff:handoff [focus]` | Writes `<repo>/.claude/handoffs/<YYYY-MM-DD-HHMM>-<slug>.md` (state, next step, open questions, a kickoff paragraph) and ends the turn in the same chat, leaving running agents running and starting no new work; compaction re-injects it. Only when you ask for a new chat does it copy the file to the clipboard (`pbcopy` on macOS, `wl-copy` on Wayland; elsewhere it prints the text instead) for you to paste. |
+| Stop hook | When the main thread ends a turn at 100k+ tokens, it blocks once and asks Claude to write or refresh the handoff file, listing running subagents and background work as in flight with their output files (the message names the agents the transcript shows as launched with no result yet), then to keep working in the same chat: no stopping, no waiting, no "open a new chat". The message ends with the handoff recorded for this session, or says none is recorded and that only a Write-tool file is re-injected. A compaction or `/clear` re-arms it. |
+| PostToolUse hook | When a subagent passes 120k tokens, it tells it once to finish its step and hand off. When the main thread writes or edits a file directly in `.claude/handoffs/` (not `agent-*`), it records that file as this session's handoff. |
+| SessionStart, SessionEnd hooks | After a compaction, it injects the handoff this session recorded, if it was written in the last 3 hours; after a `/clear`, the one the cleared session recorded (SessionEnd notes which session `/clear` ended in that directory). It never falls back to another file, so chats sharing a directory never load each other's handoff. After a compaction it follows with the agents still running from before it (up to 20). On every session start it also reaps orphaned background processes (below). |
 | `handoff:lean-implementer`, `handoff:lean-reviewer` | Lean subagents for plan-driven work. They know the "CONTEXT LIMIT" message: the implementer writes `.claude/handoffs/agent-<task>-<n>.md` and returns `Status: HANDOFF <path>`; the reviewer returns `Status: PARTIAL`. |
 
 The hooks run `ctxguard`, a small Go binary (source in `plugins/handoff/src/ctxguard`, builds for macOS and Linux on arm64 and amd64 in `bin/`). It never fails a hook: on any error it exits 0 silently.
@@ -54,7 +54,7 @@ Set these in the `env` block of `~/.claude/settings.json`:
 |---|---|---|
 | `CTXGUARD_MAIN_LIMIT` | `100000` | Main-thread tokens at which the Stop hook asks for a handoff. Keep it at least 15k below where compaction really fires: with `autoCompactWindow: 170000` that was measured at about 129-137k, well under the window itself. |
 | `CTXGUARD_AGENT_LIMIT` | `120000` | Subagent tokens at which it is told to hand off |
-| `CTXGUARD_STATE_DIR` | `~/.claude/state/ctxguard` | One-shot markers, so each session or agent is told once |
+| `CTXGUARD_STATE_DIR` | `~/.claude/state/ctxguard` | One-shot markers, so each session or agent is told once, and each session's handoff record (pruned with reaping, after the idle window) |
 | `CTXGUARD_LOG` | unset | A file to log every hook decision and reap verdict to, for debugging |
 | `CTXGUARD_REAP` | unset | `0` turns reaping off |
 | `CTXGUARD_REAP_IDLE` | `72h` | How long a process and its session's transcript must be idle before it is reaped (a Go duration) |

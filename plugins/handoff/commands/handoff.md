@@ -32,7 +32,7 @@ Check every file:line, symbol, hash, path, command and number before it goes in,
 ## 4. Write it to a file
 Save to `<primary repo>/.claude/handoffs/<YYYY-MM-DD-HHMM>-<slug>.md`, where the primary repo is the chat's working directory and the slug is 2–4 words of the title. Keep `.claude/handoffs/` out of git (a global gitignore entry; see the plugin README). Write plain text in this shape: no outer fence, inner code fences are fine. A long session needs about 600–900 words, a short one a few lines. Omit empty sections.
 
-**Running log.** After the first handoff in this chat, keep that same file current with small edits at each milestone (a task frozen, a decision made, an agent dispatched or finished) instead of re-gathering everything into a new one.
+**Running log.** After the first handoff in this chat, keep that same file current at each milestone (a task frozen, a decision made, an agent dispatched or finished) instead of re-gathering everything into a new one. Edit the sections in place: replace the header line, In progress and Next; move a finished item into Done as one line with its commit; add a new decision to Not in the code. Never append dated log lines at the end. The file is re-injected after every compaction, so it must describe the current state, not the history. Keep it under ~900 words: once a piece is complete, collapse its Done lines into one line naming its commit range.
 
 ```text
 Handoff: <title> · <YYYY-MM-DD>
@@ -65,10 +65,10 @@ Before saving, check:
 - No secrets, no file dumps, no relative dates.
 
 ## 5. Deliver
-By default, do not copy anything and do not ask for a new chat: the work continues here, and compaction (or a `/clear`) re-injects the newest handoff. Reply with only these lines, then carry on with Next:
+By default, do not copy anything and do not ask for a new chat. Reply with only these lines, then end the turn: running agents keep running, and no new work starts.
 
 ```text
-Handoff saved: [<file name>](<path>) · continuing here; compaction re-injects it.
+Handoff saved: [<file name>](<path>)
 Next: <the single next action> · Waiting on you: <questions, each marked gates or doesn't gate Next> | nothing
 Persisted: <what step 1 wrote, and where> | nothing
 ```
