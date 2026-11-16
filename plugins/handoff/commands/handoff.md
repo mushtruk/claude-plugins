@@ -65,10 +65,10 @@ Before saving, check:
 - No secrets, no file dumps, no relative dates.
 
 ## 5. Deliver
-By default, do not copy anything and do not ask for a new chat: the work continues here, and compaction (or a `/clear`) re-injects the handoff this session wrote. Reply with only these lines, then carry on with Next:
+By default, do not copy anything and do not ask for a new chat. Reply with only these lines, then end the turn: running agents keep running, and no new work starts.
 
 ```text
-Handoff saved: [<file name>](<path>) · continuing here; compaction re-injects it.
+Handoff saved: [<file name>](<path>)
 Next: <the single next action> · Waiting on you: <questions, each marked gates or doesn't gate Next> | nothing
 Persisted: <what step 1 wrote, and where> | nothing
 ```
