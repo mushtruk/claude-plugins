@@ -1,0 +1,11 @@
+{
+  "description": "driftguard: on session start, and on a prompt at most every 30 minutes per worktree, tells the session what new overlap its branch has with origin's default branch, sibling branches, announcements and claims.",
+  "hooks": {
+    "SessionStart": [
+      {"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/driftguard\" hook", "timeout": 10}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/driftguard\" hook", "timeout": 10}]}
+    ]
+  }
+}
