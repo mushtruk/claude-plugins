@@ -5,6 +5,7 @@ Claude Code plugins.
 ```
 /plugin marketplace add mushtruk/claude-plugins
 /plugin install handoff@mushtruk
+/plugin install driftguard@mushtruk
 ```
 
 Then restart Claude Code. A private repo clones over your GitHub SSH key (it must work without a passphrase prompt) or a stored HTTPS credential. Updates are off by default: `/plugin` → Marketplaces → mushtruk → Enable auto-update, or `/plugin marketplace update mushtruk`.
@@ -65,5 +66,35 @@ Set these in the `env` block of `~/.claude/settings.json`:
 cd plugins/handoff/src/ctxguard && go test ./...
 for t in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
   CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -ldflags='-s -w -buildid=' -o ../../bin/ctxguard-${t%/*}-${t#*/} .
+done
+```
+
+## driftguard
+
+Sessions working in parallel worktrees drift apart: two branches rework the same files, or the default branch moves under one of them, and nobody notices until a large merge conflict. This plugin tells each session, early, which files its branch shares with origin's default branch and with sibling branches, while the overlap is still small.
+
+| Piece | What it does |
+|---|---|
+| SessionStart hook | Reports every standing overlap: upstream commits on origin's default branch that change files this branch also changes (with a merge or rebase command), and each sibling branch, local or pushed, that changes the same files. Every new, resumed, cleared or compacted context hears the standing overlap once, since the earlier notice is gone from its context. |
+| UserPromptSubmit hook | Checks the worktree at most every 30 minutes and speaks only when there is news: a new upstream commit or a sibling touching one more shared file. Otherwise it stays silent. |
+
+The hooks run `driftguard`, a small Go binary (source in `plugins/driftguard/src/driftguard`, builds for macOS and Linux on arm64 and amd64 in `bin/`). It fetches origin's default branch at most every 30 minutes per repo, and falls back to local refs, with a note that they may be stale, when the fetch fails. It never fails a hook: on any error it exits 0 silently and logs why.
+
+**Scope.** driftguard reads only git metadata about other branches: their names, pushed state and changed file names. It only ever advises actions inside the session's own branch: merge or rebase, adapt the branch, or contact the other branch's session.
+
+**Coverage.** The hook sees only the worktree of the session's `cwd`. A session on the default branch gets no overlap report. Subagents fire neither hook; they learn through the main session's briefs. Without `refs/remotes/origin/HEAD` driftguard stays silent; `git remote set-head origin --auto` fixes it.
+
+### Settings
+
+| Variable | Default | |
+|---|---|---|
+| `DRIFTGUARD_STATE_DIR` | `~/.claude/state/driftguard` | Per-worktree fingerprints of what each session was told, per-repo fetch times, and `log.jsonl`, one line per hook run (capped at 1 MiB plus one rotated file) |
+
+### Rebuild
+
+```sh
+cd plugins/driftguard/src/driftguard && go test ./...
+for t in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
+  CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -ldflags='-s -w -buildid=' -o ../../bin/driftguard-${t%/*}-${t#*/} .
 done
 ```

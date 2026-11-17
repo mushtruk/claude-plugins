@@ -75,3 +75,11 @@ type siblingFinding struct {
 	pushed bool
 	files  paths
 }
+
+// report is everything a check found for one branch.
+type report struct {
+	upstream upstreamFinding
+	siblings []siblingFinding
+	pushed   bool // this branch is on origin
+	stale    bool // the fetch failed, so origin refs may be old
+}
