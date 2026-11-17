@@ -71,6 +71,44 @@ func TestNewAnnouncementLineTooLong(t *testing.T) {
 	}
 }
 
+func TestNewClaimValidates(t *testing.T) {
+	t.Parallel()
+	// json.Marshal writes each & as &, six bytes, so these overflow a
+	// line within the per-field bounds.
+	escaped := strings.Repeat("&", 300)
+	escapedPaths := make([]string, 10)
+	for i := range escapedPaths {
+		escapedPaths[i] = fmt.Sprintf("p%d/", i) + strings.Repeat("&", 190)
+	}
+	tests := []struct {
+		name    string
+		paths   []string
+		summary string
+		wantErr bool
+	}{
+		{name: "valid", paths: []string{"gopkg/mailer", "proto/*/mail.proto"}, summary: "mailer API"},
+		{name: "no paths", summary: "mailer API", wantErr: true},
+		{name: "empty summary", paths: []string{"pkg/m"}, summary: " ", wantErr: true},
+		{name: "301-rune summary", paths: []string{"pkg/m"}, summary: strings.Repeat("s", 301), wantErr: true},
+		{name: "11 paths", paths: longPaths(11, 5), summary: "s", wantErr: true},
+		{name: "absolute path", paths: []string{"/etc"}, summary: "s", wantErr: true},
+		{name: "bad pattern", paths: []string{"["}, summary: "s", wantErr: true},
+		{name: "line too long", paths: escapedPaths, summary: escaped, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c, err := newClaim(testPosted, tt.paths, tt.summary)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err == nil && c.line().Claim == nil {
+				t.Error("claim line has no claim payload")
+			}
+		})
+	}
+}
+
 // maximalAnnouncement is a valid announcement whose line, newline included,
 // is exactly maxLine bytes.
 func maximalAnnouncement(t *testing.T, i int) announcement {

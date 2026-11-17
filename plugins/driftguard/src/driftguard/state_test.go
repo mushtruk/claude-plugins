@@ -87,6 +87,10 @@ func TestStatesFetchWindowIsPerCommonDir(t *testing.T) {
 func TestFingerprintNews(t *testing.T) {
 	t.Parallel()
 	current := report{
+		claims: []claimFinding{
+			{claim: testClaim("c1", "feat/x", 0, claimTime, "pkg"), files: paths{"pkg/a.go", "pkg/b.go"}},
+			{claim: testClaim("c2", "feat/y", 1, claimTime, "lib"), files: paths{"lib/c.go"}},
+		},
 		upstream: upstreamFinding{commits: 3, shas: []string{"s1", "s2"}, files: paths{"a.go"}},
 		siblings: []siblingFinding{
 			{branch: "feat/x", files: paths{"a.go", "b.go"}},
@@ -103,18 +107,21 @@ func TestFingerprintNews(t *testing.T) {
 		{
 			name: "known shas and file subsets are no news",
 			prev: fingerprint{
+				Claims:   map[string]paths{"c1": {"pkg/a.go", "pkg/b.go"}, "c2": {"lib/c.go", "lib/d.go"}},
 				Upstream: []string{"s1", "s2", "s0"},
 				Siblings: map[string]paths{"feat/x": {"a.go", "b.go", "z.go"}, "feat/y": {"c.go"}},
 			},
 			want: report{stale: true},
 		},
 		{
-			name: "a new upstream sha and a new sibling file are news",
+			name: "a new file inside a known claim, a new upstream sha and a new sibling file are news",
 			prev: fingerprint{
+				Claims:   map[string]paths{"c1": {"pkg/a.go"}, "c2": {"lib/c.go"}},
 				Upstream: []string{"s1"},
 				Siblings: map[string]paths{"feat/x": {"a.go"}, "feat/y": {"c.go"}},
 			},
 			want: report{
+				claims:   current.claims[:1],
 				upstream: current.upstream,
 				siblings: current.siblings[:1],
 				stale:    true,
@@ -134,6 +141,7 @@ func TestFingerprintNews(t *testing.T) {
 func TestFingerprintOfReportHasNoNews(t *testing.T) {
 	t.Parallel()
 	r := report{
+		claims:   []claimFinding{{claim: testClaim("c1", "feat/x", 0, claimTime, "pkg"), files: paths{"pkg/a.go"}}},
 		upstream: upstreamFinding{commits: 3, shas: []string{"s1"}, files: paths{"a.go"}},
 		siblings: []siblingFinding{{branch: "feat/x", pushed: true, files: paths{"a.go"}}},
 		pushed:   true,

@@ -78,6 +78,7 @@ type siblingFinding struct {
 
 // report is everything a check found for one branch.
 type report struct {
+	claims        []claimFinding
 	announcements []announcement // in board order
 	upstream      upstreamFinding
 	siblings      []siblingFinding

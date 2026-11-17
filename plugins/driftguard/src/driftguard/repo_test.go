@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // survey is what the repo reports about one worktree's branch.
@@ -305,5 +306,82 @@ func TestRepoDefaultBranch(t *testing.T) {
 	f.git(f.main, "remote", "set-head", "origin", "-d")
 	if _, err := r.defaultBranch(ctx); !errors.Is(err, errNoOriginHead) {
 		t.Fatalf("defaultBranch without origin/HEAD: err = %v, want errNoOriginHead", err)
+	}
+}
+
+// landingOf opens dir and returns landing's report on branches.
+func landingOf(t *testing.T, f *fixture, dir string, branches ...string) map[string]tip {
+	t.Helper()
+	ctx := context.Background()
+	r, err := openRepo(ctx, f.runner(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tips, err := r.landing(ctx, "master", branches)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tips
+}
+
+func TestRepoLandingFollowsABranchUntilItLands(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	wa := f.worktree("wa", "feat/a")
+	f.commit(wa, map[string]string{"a.go": "package a // a\n"}, "a")
+	wy := f.worktree("wy", "feat/y")
+
+	tips := landingOf(t, f, f.main, "feat/a", "feat/y")
+	if got := tips["feat/a"]; got.sha != f.git(wa, "rev-parse", "HEAD") || got.merged {
+		t.Errorf("local-only branch: tip = %+v, want its head unmerged", got)
+	}
+	if got, ok := tips["feat/y"]; !ok || got.merged {
+		t.Errorf("branch at origin/master's tip: tip = %+v, %v; want present, unmerged", got, ok)
+	}
+
+	f.upstream(map[string]string{"c.go": "package c // up\n"})
+	f.fetchMain()
+	f.git(wy, "merge", "-q", "--ff-only", "origin/master")
+	if got := landingOf(t, f, f.main, "feat/y")["feat/y"]; got.merged || got.sha != f.git(f.main, "rev-parse", "origin/master") {
+		t.Errorf("fast-forwarded to origin/master: tip = %+v, want origin/master's tip unmerged", got)
+	}
+
+	f.commit(wy, map[string]string{"b.go": "package b // y\n"}, "y")
+	f.merge("feat/y")
+	f.fetchMain()
+	if got := landingOf(t, f, f.main, "feat/y")["feat/y"]; !got.merged {
+		t.Errorf("after its merge: tip = %+v, want merged", got)
+	}
+
+	f.detach(wy)
+	f.deleteBranch("feat/y")
+	if got, ok := landingOf(t, f, f.main, "feat/y")["feat/y"]; ok {
+		t.Errorf("after deletion: tip = %+v, want absent", got)
+	}
+}
+
+func TestRepoLandingCreated(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	created := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	w := f.at(created.Format(time.RFC3339)).worktree("w", "feat/r")
+	f.at("2026-03-01T00:00:00Z").commit(w, map[string]string{"a.go": "package a // 1\n"}, "one")
+	f.at("2026-04-01T00:00:00Z").commit(w, map[string]string{"a.go": "package a // 2\n"}, "two")
+	f.git(f.main, "-c", "core.logAllRefUpdates=false", "branch", "feat/n", "master")
+	other := f.clone()
+	f.git(other, "checkout", "-q", "-b", "feat/o")
+	f.commit(other, map[string]string{"o.go": "package o\n"}, "o")
+	f.push(other, "feat/o")
+	f.fetchMain()
+
+	tips := landingOf(t, f, f.main, "feat/r", "feat/n", "feat/o")
+	if got := tips["feat/r"].created; !got.Equal(created) {
+		t.Errorf("created = %v, want the branch's creation %v", got, created)
+	}
+	if got, ok := tips["feat/n"]; !ok || !got.created.IsZero() {
+		t.Errorf("branch without a reflog: tip = %+v, %v; want present with zero created", got, ok)
+	}
+	if got, ok := tips["feat/o"]; !ok || !got.created.IsZero() || got.sha != f.git(other, "rev-parse", "HEAD") {
+		t.Errorf("branch only on origin: tip = %+v, %v; want origin's tip with zero created", got, ok)
 	}
 }

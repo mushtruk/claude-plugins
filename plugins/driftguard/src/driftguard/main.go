@@ -5,6 +5,10 @@
 //	driftguard hook   SessionStart / UserPromptSubmit hook (stdin: hook JSON)
 //	driftguard post --summary S --action A [--paths p1,p2]
 //	                  announce a contract change to other branches' sessions
+//	driftguard claim --summary S --paths p1,p2
+//	                  own a shared surface until this branch lands
+//	driftguard release
+//	                  end every claim this branch posted
 //
 // The hook never fails loudly: any error exits 0 without output and leaves a
 // line in <state dir>/log.jsonl. The state dir is $DRIFTGUARD_STATE_DIR, else

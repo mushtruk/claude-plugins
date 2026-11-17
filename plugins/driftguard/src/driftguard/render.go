@@ -22,6 +22,9 @@ const (
 // gives is an action inside branch itself.
 func render(branch, def string, r report) (string, []announcement) {
 	var sections []string
+	for _, c := range r.claims {
+		sections = append(sections, claimLine(c))
+	}
 	for i, a := range r.announcements {
 		sec := announcementLine(a)
 		if i == 0 {
@@ -64,7 +67,16 @@ func render(branch, def string, r report) (string, []announcement) {
 		b.WriteString(sec)
 		used += utf8.RuneCountInString(sec)
 	}
-	return b.String(), r.announcements[:min(shown, len(r.announcements))]
+	return b.String(), r.announcements[:min(max(shown-len(r.claims), 0), len(r.announcements))]
+}
+
+func claimLine(c claimFinding) string {
+	named := c.files[:min(len(c.files), maxFiles)]
+	list := strings.Join(named, ", ")
+	if more := len(c.files) - len(named); more > 0 {
+		list += fmt.Sprintf(", and %d more", more)
+	}
+	return fmt.Sprintf("%s owns %s (%s). Build on its shape; don't add a parallel one. Coordinate through that branch's session.\n", c.Branch, list, c.Summary)
 }
 
 func announcementLine(a announcement) string {

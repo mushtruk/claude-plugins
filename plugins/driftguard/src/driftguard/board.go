@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -75,17 +76,18 @@ func (ps patterns) validate() error {
 // matches reports whether any file falls under ps; no patterns cover every
 // file.
 func (ps patterns) matches(files paths) bool {
-	if len(ps) == 0 {
-		return true
-	}
+	return len(ps) == 0 || len(ps.covered(files)) > 0
+}
+
+// covered returns the files that fall under some pattern of ps.
+func (ps patterns) covered(files paths) paths {
+	var out paths
 	for _, f := range files {
-		for _, p := range ps {
-			if covers(p, f) {
-				return true
-			}
+		if slices.ContainsFunc(ps, func(p string) bool { return covers(p, f) }) {
+			out = append(out, f)
 		}
 	}
-	return false
+	return out
 }
 
 func covers(pattern, file string) bool {
@@ -93,7 +95,13 @@ func covers(pattern, file string) bool {
 		ok, _ := path.Match(pattern, file)
 		return ok
 	}
-	return file == pattern || strings.HasPrefix(file, pattern+"/")
+	return within(file, pattern)
+}
+
+// within reports whether p lies inside dir on a directory boundary; ""
+// is the repo root.
+func within(p, dir string) bool {
+	return dir == "" || p == dir || strings.HasPrefix(p, dir+"/")
 }
 
 func validText(name, s string) error {
@@ -160,6 +168,29 @@ func (a announcement) line() line {
 type claim struct {
 	posted
 	claimPayload
+}
+
+// newClaim validates a claim for posting.
+func newClaim(p posted, paths []string, summary string) (claim, error) {
+	c := claim{posted: p, claimPayload: claimPayload{
+		Paths:   paths,
+		Summary: strings.TrimSpace(summary),
+	}}
+	if err := c.validate(); err != nil {
+		return claim{}, err
+	}
+	if _, err := c.line().encode(); err != nil {
+		return claim{}, err
+	}
+	return c, nil
+}
+
+func (c claim) line() line {
+	return line{posted: c.posted, Claim: &c.claimPayload}
+}
+
+func (r release) line() line {
+	return line{posted: r.posted, Release: &releasePayload{}}
 }
 
 // release ends every earlier claim of its branch.

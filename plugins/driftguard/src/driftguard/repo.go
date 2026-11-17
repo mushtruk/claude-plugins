@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -264,6 +266,139 @@ func (r repo) siblingOverlap(ctx context.Context, def, branch string, own branch
 		return nil, err
 	}
 	return theirs.intersect(own.files), nil
+}
+
+// tip is what git knows of a branch's ref when deciding whether it landed.
+type tip struct {
+	sha string
+	// merged: the tip reached origin/<def> through a merge, off its
+	// first-parent chain. A tip on that chain only caught up with it.
+	merged bool
+	// created is the oldest entry of the local ref's reflog, zero when
+	// there is none.
+	created time.Time
+}
+
+// landing returns the tips of branches, from refs/heads/ or else
+// refs/remotes/origin/; a branch with neither ref is absent.
+func (r repo) landing(ctx context.Context, def string, branches []string) (map[string]tip, error) {
+	if len(branches) == 0 {
+		return nil, nil
+	}
+	local, remote, err := r.branchRefs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tips := make(map[string]tip)
+	ancestors := make(map[string]bool)
+	for _, b := range branches {
+		sha, ok := local[b]
+		if !ok {
+			sha, ok = remote[b]
+		}
+		if _, done := tips[b]; done || !ok {
+			continue
+		}
+		t := tip{sha: sha}
+		ancestor, err := r.isAncestor(ctx, sha, "origin/"+def)
+		if err != nil {
+			return nil, err
+		}
+		if ancestor {
+			ancestors[b] = true
+		}
+		if _, ok := local[b]; ok {
+			if t.created, err = r.created(ctx, b); err != nil {
+				return nil, err
+			}
+		}
+		tips[b] = t
+	}
+	if len(ancestors) == 0 {
+		return tips, nil
+	}
+	chain, err := r.firstParents(ctx, "origin/"+def)
+	if err != nil {
+		return nil, err
+	}
+	for b := range ancestors {
+		t := tips[b]
+		t.merged = !chain[t.sha]
+		tips[b] = t
+	}
+	return tips, nil
+}
+
+// liveClaims returns the claims in e still in force.
+func (r repo) liveClaims(ctx context.Context, def string, e entries) ([]claim, error) {
+	tips, err := r.landing(ctx, def, e.claimants())
+	if err != nil {
+		return nil, err
+	}
+	return e.live(tips), nil
+}
+
+// branchRefs returns the tip of every local branch and every origin branch.
+func (r repo) branchRefs(ctx context.Context) (local, remote map[string]string, err error) {
+	out, err := r.run(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/", "refs/remotes/origin/")
+	if err != nil {
+		return nil, nil, err
+	}
+	local, remote = make(map[string]string), make(map[string]string)
+	for l := range strings.Lines(string(out)) {
+		ref, sha, _ := strings.Cut(strings.TrimSpace(l), " ")
+		if b, ok := strings.CutPrefix(ref, "refs/heads/"); ok {
+			local[b] = sha
+		} else if b, ok := strings.CutPrefix(ref, "refs/remotes/origin/"); ok {
+			remote[b] = sha
+		}
+	}
+	return local, remote, nil
+}
+
+func (r repo) isAncestor(ctx context.Context, commit, of string) (bool, error) {
+	_, err := r.run(ctx, "merge-base", "--is-ancestor", commit, of)
+	if exitStatus(err) == 1 {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// firstParents returns the commits on ref's first-parent chain.
+func (r repo) firstParents(ctx context.Context, ref string) (map[string]bool, error) {
+	out, err := r.run(ctx, "rev-list", "--first-parent", ref)
+	if err != nil {
+		return nil, err
+	}
+	chain := make(map[string]bool)
+	for _, sha := range strings.Fields(string(out)) {
+		chain[sha] = true
+	}
+	return chain, nil
+}
+
+// created returns the time of the oldest entry in branch's reflog, zero when
+// the reflog is empty or missing. Each line reads <branch>@{<unix time>},
+// newest first.
+func (r repo) created(ctx context.Context, branch string) (time.Time, error) {
+	out, err := r.run(ctx, "log", "-g", "--date=unix", "--format=%gd", "refs/heads/"+branch)
+	if err != nil {
+		return time.Time{}, err
+	}
+	lines := strings.Fields(string(out))
+	if len(lines) == 0 {
+		return time.Time{}, nil
+	}
+	oldest := lines[len(lines)-1]
+	i := strings.LastIndex(oldest, "@{")
+	if i < 0 || !strings.HasSuffix(oldest, "}") {
+		return time.Time{}, fmt.Errorf("git log -g: unexpected reflog selector %q", oldest)
+	}
+	secs, err := strconv.ParseInt(oldest[i+2:len(oldest)-1], 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("git log -g: unexpected reflog selector %q: %w", oldest, err)
+	}
+	return time.Unix(secs, 0).UTC(), nil
 }
 
 func splitNul(out []byte) []string {

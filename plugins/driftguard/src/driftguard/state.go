@@ -14,12 +14,19 @@ import (
 
 // fingerprint is the overlap a worktree's session was last told about.
 type fingerprint struct {
+	Claims   map[string]paths `json:"claims,omitempty"`   // claim id to the files inside it
 	Upstream []string         `json:"upstream,omitempty"` // overlapping upstream commit shas
 	Siblings map[string]paths `json:"siblings,omitempty"` // branch to overlapping files
 }
 
 func fingerprintOf(r report) fingerprint {
 	f := fingerprint{Upstream: r.upstream.shas}
+	for _, c := range r.claims {
+		if f.Claims == nil {
+			f.Claims = make(map[string]paths)
+		}
+		f.Claims[c.id] = c.files
+	}
 	for _, s := range r.siblings {
 		if f.Siblings == nil {
 			f.Siblings = make(map[string]paths)
@@ -29,13 +36,19 @@ func fingerprintOf(r report) fingerprint {
 	return f
 }
 
-// news keeps the sections of r the session hasn't heard: upstream when it
+// news keeps the sections of r the session hasn't heard: a claim when one
+// of this branch's files inside it was not warned before; upstream when it
 // has an overlapping commit not seen before, since the default branch is
 // never rewritten; a sibling when it has a file not seen before, since
 // siblings rebase and their shas change. Announcements pass through: what a
 // session saw of them is tracked apart, in state.Seen.
 func (f fingerprint) news(r report) report {
 	out := report{announcements: r.announcements, pushed: r.pushed, stale: r.stale}
+	for _, c := range r.claims {
+		if len(c.files.intersect(f.Claims[c.id])) < len(c.files) {
+			out.claims = append(out.claims, c)
+		}
+	}
 	for _, sha := range r.upstream.shas {
 		if !slices.Contains(f.Upstream, sha) {
 			out.upstream = r.upstream

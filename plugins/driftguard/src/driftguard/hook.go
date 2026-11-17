@@ -162,10 +162,16 @@ func (w watcher) check(ctx context.Context, ev event, cwd string) (text, decisio
 	if err != nil {
 		return "", "", err
 	}
-	recent, err := w.recentAnnouncements(r, now)
+	e, err := w.boardEntries(r)
 	if err != nil {
 		return "", "", err
 	}
+	live, err := r.liveClaims(ctx, def, e)
+	if err != nil {
+		return "", "", err
+	}
+	rep.claims = claimsOver(live, branch, files)
+	recent := e.recentAnnouncements(now)
 	for _, a := range recent {
 		if a.concerns(branch, files) {
 			rep.announcements = append(rep.announcements, a)
@@ -190,17 +196,16 @@ func (w watcher) check(ctx context.Context, ev event, cwd string) (text, decisio
 	return text, "spoke", nil
 }
 
-// recentAnnouncements reads the repo's board for the announcements inside
-// the window.
-func (w watcher) recentAnnouncements(r repo, now time.Time) ([]announcement, error) {
+// boardEntries reads the repo's board, logging the lines it skipped.
+func (w watcher) boardEntries(r repo) (entries, error) {
 	e, skipped, err := r.board().read()
 	if err != nil {
-		return nil, err
+		return entries{}, err
 	}
 	if skipped > 0 {
 		w.log.Warn("board lines skipped", "root", r.root, "count", skipped)
 	}
-	return e.recentAnnouncements(now), nil
+	return e, nil
 }
 
 // overlap fetches the default branch when the repo's fetch window allows and

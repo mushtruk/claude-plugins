@@ -390,12 +390,19 @@ func TestHookLogsOneLineWithoutThePrompt(t *testing.T) {
 }
 
 // post posts an announcement from dir at the rig's current time.
-func (r *rig) post(t *testing.T, dir string, args ...string) {
+// cli runs a driftguard subcommand in dir, failing the test unless it
+// succeeds.
+func (r *rig) cli(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	if code := (poster{git: r.f.runner(), now: r.clock.now}).run(dir, append([]string{"post"}, args...), &stdout, &stderr); code != 0 {
-		t.Fatalf("post exit %d: %s", code, stderr.String())
+	if code := (poster{git: r.f.runner(), now: r.clock.now}).run(dir, args, &stdout, &stderr); code != 0 {
+		t.Fatalf("%s exit %d: %s", args[0], code, stderr.String())
 	}
+}
+
+func (r *rig) post(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	r.cli(t, dir, append([]string{"post"}, args...)...)
 }
 
 func TestHookAnnouncementsMatchBranchFiles(t *testing.T) {
@@ -480,4 +487,64 @@ func TestHookDefaultBranchHearsAnnouncements(t *testing.T) {
 	r.post(t, x, "--summary", "m changes", "--action", "adapt", "--paths", "pkg/m")
 	r.f.write(r.f.main, map[string]string{"pkg/m/m.go": "package m // wip on master\n"})
 	wantContains(t, runHook(t, r.w, startEvent(r.f.main)), "m changes")
+}
+
+func TestHookClaimsWarnOtherBranches(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	x := r.f.worktree("x", "feat/x")
+	r.cli(t, x, "claim", "--summary", "mailer API", "--paths", "pkg/m")
+	r.f.commit(x, map[string]string{"pkg/m/m.go": "package m // feat/x\n"}, "x")
+	m := r.f.worktree("m", "feat/m")
+	r.f.commit(m, map[string]string{"pkg/m/m.go": "package m // feat/m\n"}, "m")
+	warning := "feat/x owns pkg/m/m.go (mailer API)."
+
+	wantContains(t, runHook(t, r.w, startEvent(m)), warning)
+	if got := runHook(t, r.w, startEvent(x)); strings.Contains(got, " owns ") {
+		t.Errorf("the claiming branch is warned about its own claim:\n%s", got)
+	}
+
+	r.clock.advance(31 * time.Minute)
+	if got := runHook(t, r.w, promptEvent(m)); strings.Contains(got, " owns ") {
+		t.Errorf("a known claim is warned again:\n%s", got)
+	}
+	r.f.commit(m, map[string]string{"pkg/m/n.go": "package m\n"}, "n")
+	r.clock.advance(31 * time.Minute)
+	wantContains(t, runHook(t, r.w, promptEvent(m)), "feat/x owns pkg/m/m.go, pkg/m/n.go (mailer API).")
+
+	r.cli(t, x, "release")
+	if got := runHook(t, r.w, startEvent(m)); strings.Contains(got, " owns ") {
+		t.Errorf("a released claim is still warned:\n%s", got)
+	}
+}
+
+func TestHookClaimLastsUntilItsBranchLands(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	x := r.f.worktree("x", "feat/x")
+	r.cli(t, x, "claim", "--summary", "mailer API", "--paths", "pkg/m")
+	r.f.upstream(map[string]string{"c.go": "package c // up\n"})
+	r.f.fetchMain()
+	r.f.git(x, "merge", "-q", "--ff-only", "origin/master")
+	m := r.f.worktree("m", "feat/m")
+	r.f.commit(m, map[string]string{"pkg/m/m.go": "package m // feat/m\n"}, "m")
+	warning := "feat/x owns pkg/m/m.go (mailer API)."
+
+	wantContains(t, runHook(t, r.w, startEvent(m)), warning)
+
+	r.f.commit(x, map[string]string{"pkg/m/x.go": "package m\n"}, "x")
+	r.f.merge("feat/x")
+	r.f.fetchMain()
+	if got := runHook(t, r.w, startEvent(m)); strings.Contains(got, " owns ") {
+		t.Errorf("a landed branch's claim is still warned:\n%s", got)
+	}
+}
+
+func TestHookDefaultBranchHearsClaims(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	x := r.f.worktree("x", "feat/x")
+	r.cli(t, x, "claim", "--summary", "mailer API", "--paths", "pkg/m")
+	r.f.write(r.f.main, map[string]string{"pkg/m/m.go": "package m // wip on master\n"})
+	wantContains(t, runHook(t, r.w, startEvent(r.f.main)), "feat/x owns pkg/m/m.go (mailer API).")
 }

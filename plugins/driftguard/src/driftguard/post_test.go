@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,6 +114,10 @@ func TestPostRefuses(t *testing.T) {
 		{name: "detached HEAD", detach: true, args: []string{"post", "--summary", "s", "--action", "a"}, wantCode: 1, wantStderr: "detached"},
 		{name: "missing summary", args: []string{"post", "--action", "a"}, wantCode: 2, wantStderr: "usage"},
 		{name: "no subcommand", args: nil, wantCode: 2, wantStderr: "usage"},
+		{name: "claim without paths", args: []string{"claim", "--summary", "s"}, wantCode: 2, wantStderr: "usage"},
+		{name: "claim without summary", args: []string{"claim", "--paths", "pkg/m"}, wantCode: 2, wantStderr: "usage"},
+		{name: "release with arguments", args: []string{"release", "pkg/m"}, wantCode: 2, wantStderr: "usage"},
+		{name: "claim with a blank path", args: []string{"claim", "--summary", "s", "--paths", " "}, wantCode: 1, wantStderr: "not a clean repo-relative path"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -130,5 +135,90 @@ func TestPostRefuses(t *testing.T) {
 				t.Errorf("board has %d lines, want none", n)
 			}
 		})
+	}
+}
+
+func TestClaimAppendsAClaim(t *testing.T) {
+	t.Parallel()
+	c := newCLI(t)
+	x := c.f.worktree("x", "feat/x")
+	code, stdout, stderr := c.run(x, "claim", "--summary", "mailer API", "--paths", "pkg/m, proto/*/mail.proto")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	lines := c.boardLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("board has %d lines, want 1", len(lines))
+	}
+	var got line
+	if err := json.Unmarshal([]byte(lines[0]), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Claim == nil || got.Branch != "feat/x" || strings.Join(got.Claim.Paths, ",") != "pkg/m,proto/*/mail.proto" || got.Claim.Summary != "mailer API" {
+		t.Errorf("line = %+v, claim %+v", got, got.Claim)
+	}
+	if want := "claimed " + lineID([]byte(lines[0])) + " to " + c.boardPath() + "\n"; stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+}
+
+func TestClaimOverlappingAnotherBranchIsRecordedAndNamed(t *testing.T) {
+	t.Parallel()
+	c := newCLI(t)
+	x := c.f.worktree("x", "feat/x")
+	y := c.f.worktree("y", "feat/y")
+	if code, _, stderr := c.run(x, "claim", "--summary", "mailer API", "--paths", "pkg/m"); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+
+	code, stdout, stderr := c.run(x, "claim", "--summary", "mailer send", "--paths", "pkg/m/m.go")
+	if code != 0 || strings.Count(stdout, "\n") != 1 || !strings.HasPrefix(stdout, "claimed ") {
+		t.Errorf("own overlap: exit %d, stdout %q, stderr %q; want only the claimed line", code, stdout, stderr)
+	}
+
+	code, stdout, stderr = c.run(y, "claim", "--summary", "mail delivery", "--paths", "pkg/m/m.go")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	out := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	if len(out) != 3 || !strings.HasPrefix(out[0], "claimed ") {
+		t.Fatalf("stdout = %q, want the claimed line then one line per overlapping claim", stdout)
+	}
+	for _, want := range []string{
+		"feat/x already claims pkg/m (mailer API). Settle ownership with that branch's session before building; release your claim if it owns the surface.",
+		"feat/x already claims pkg/m/m.go (mailer send). Settle ownership with that branch's session before building; release your claim if it owns the surface.",
+	} {
+		if !slices.Contains(out[1:], want) {
+			t.Errorf("stdout %q lacks %q", stdout, want)
+		}
+	}
+	if n := len(c.boardLines(t)); n != 3 {
+		t.Errorf("board has %d lines, want 3", n)
+	}
+}
+
+func TestReleaseCountsTheClaimsItEnds(t *testing.T) {
+	t.Parallel()
+	c := newCLI(t)
+	x := c.f.worktree("x", "feat/x")
+	y := c.f.worktree("y", "feat/y")
+	for _, args := range [][]string{
+		{"claim", "--summary", "one", "--paths", "pkg/m"},
+		{"claim", "--summary", "two", "--paths", "a.go"},
+	} {
+		if code, _, stderr := c.run(x, args...); code != 0 {
+			t.Fatalf("exit %d, stderr %q", code, stderr)
+		}
+	}
+	if code, _, stderr := c.run(y, "claim", "--summary", "three", "--paths", "b.go"); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	for _, want := range []string{"released 2 claims\n", "released 0 claims\n"} {
+		if code, stdout, stderr := c.run(x, "release"); code != 0 || stdout != want {
+			t.Errorf("release: exit %d, stdout %q, stderr %q; want %q", code, stdout, stderr, want)
+		}
+	}
+	if n := len(c.boardLines(t)); n != 5 {
+		t.Errorf("board has %d lines, want 5", n)
 	}
 }

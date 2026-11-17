@@ -158,6 +158,22 @@ func (f *fixture) merge(branch string) {
 	f.push(dir, "master")
 }
 
+// deleteBranch deletes a landed branch on origin and in main, as a pull
+// request merge that deletes its branch does. The branch must not be checked
+// out in any worktree.
+func (f *fixture) deleteBranch(branch string) {
+	f.t.Helper()
+	f.git(f.main, "push", "-q", "origin", "--delete", branch)
+	f.git(f.main, "branch", "-q", "-D", branch)
+}
+
+// at is f with git's committer date, and so its reflog times, set to date.
+func (f *fixture) at(date string) *fixture {
+	g := *f
+	g.env = append(append([]string(nil), f.env...), "GIT_COMMITTER_DATE="+date)
+	return &g
+}
+
 func TestFixtureHasOriginHead(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
