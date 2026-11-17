@@ -3,10 +3,13 @@
 // branches, early enough to merge while the overlap is small.
 //
 //	driftguard hook   SessionStart / UserPromptSubmit hook (stdin: hook JSON)
+//	driftguard post --summary S --action A [--paths p1,p2]
+//	                  announce a contract change to other branches' sessions
 //
 // The hook never fails loudly: any error exits 0 without output and leaves a
 // line in <state dir>/log.jsonl. The state dir is $DRIFTGUARD_STATE_DIR, else
-// ~/.claude/state/driftguard.
+// ~/.claude/state/driftguard. The other subcommands report errors on stderr
+// and exit 1, or 2 on a usage error.
 package main
 
 import (
@@ -39,7 +42,18 @@ func main() {
 	switch os.Args[1] {
 	case "hook":
 		hookMain()
+	default:
+		os.Exit(cliMain(os.Args[1:]))
 	}
+}
+
+func cliMain(args []string) int {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fail(os.Stderr, err)
+	}
+	p := poster{git: gitRunner{timeout: gitTimeout, fetchTimeout: fetchTimeout}, now: time.Now}
+	return p.run(cwd, args, os.Stdout, os.Stderr)
 }
 
 func hookMain() {

@@ -17,10 +17,18 @@ const (
 	maxChars = 3000
 )
 
-// render is the notice for r, or "" when r has no section to show. Every
-// instruction it gives is an action inside branch itself.
-func render(branch, def string, r report) string {
+// render is the notice for r, or "" when r has no section to show, and the
+// announcements it shows; the cap may drop the rest. Every instruction it
+// gives is an action inside branch itself.
+func render(branch, def string, r report) (string, []announcement) {
 	var sections []string
+	for i, a := range r.announcements {
+		sec := announcementLine(a)
+		if i == 0 {
+			sec = "Announcements from other branches:\n" + sec
+		}
+		sections = append(sections, sec)
+	}
 	if len(r.upstream.shas) > 0 {
 		sections = append(sections, upstreamSection(def, r.upstream, r.pushed))
 	}
@@ -32,7 +40,7 @@ func render(branch, def string, r report) string {
 		sections = append(sections, siblingSection(def, s))
 	}
 	if len(sections) == 0 {
-		return ""
+		return "", nil
 	}
 
 	var b strings.Builder
@@ -42,6 +50,7 @@ func render(branch, def string, r report) string {
 	}
 	b.WriteString("\n")
 	used := utf8.RuneCountInString(b.String())
+	shown := len(sections)
 	for i, sec := range sections {
 		need := used + utf8.RuneCountInString(sec)
 		if rest := len(sections) - i - 1; rest > 0 {
@@ -49,11 +58,22 @@ func render(branch, def string, r report) string {
 		}
 		if need > maxChars {
 			b.WriteString(omitted(len(sections) - i))
+			shown = i
 			break
 		}
 		b.WriteString(sec)
 		used += utf8.RuneCountInString(sec)
 	}
+	return b.String(), r.announcements[:min(shown, len(r.announcements))]
+}
+
+func announcementLine(a announcement) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "- %s UTC, %s @ %.7s: %s Do: %s", a.Time.UTC().Format("2006-01-02 15:04"), a.Branch, a.Head, a.Summary, a.Action)
+	if len(a.Paths) > 0 {
+		b.WriteString(" (paths: " + strings.Join(a.Paths, ", ") + ")")
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 

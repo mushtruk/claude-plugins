@@ -32,9 +32,10 @@ func fingerprintOf(r report) fingerprint {
 // news keeps the sections of r the session hasn't heard: upstream when it
 // has an overlapping commit not seen before, since the default branch is
 // never rewritten; a sibling when it has a file not seen before, since
-// siblings rebase and their shas change.
+// siblings rebase and their shas change. Announcements pass through: what a
+// session saw of them is tracked apart, in state.Seen.
 func (f fingerprint) news(r report) report {
-	out := report{pushed: r.pushed, stale: r.stale}
+	out := report{announcements: r.announcements, pushed: r.pushed, stale: r.stale}
 	for _, sha := range r.upstream.shas {
 		if !slices.Contains(f.Upstream, sha) {
 			out.upstream = r.upstream
@@ -53,6 +54,35 @@ func (f fingerprint) news(r report) report {
 type state struct {
 	LastCheck   time.Time   `json:"lastCheck"`
 	Fingerprint fingerprint `json:"fingerprint"`
+	Seen        []string    `json:"seen,omitempty"` // ids of announcements shown here
+}
+
+// unseen drops the announcements already shown in this worktree.
+func (s state) unseen(as []announcement) []announcement {
+	seen := make(map[string]bool, len(s.Seen))
+	for _, id := range s.Seen {
+		seen[id] = true
+	}
+	return slices.DeleteFunc(slices.Clone(as), func(a announcement) bool { return seen[a.id] })
+}
+
+// see records shown as seen and forgets ids no longer in current, the
+// announcements still on the board and inside the window.
+func (s *state) see(shown, current []announcement) {
+	seen := make(map[string]bool, len(s.Seen)+len(shown))
+	for _, id := range s.Seen {
+		seen[id] = true
+	}
+	for _, a := range shown {
+		seen[a.id] = true
+	}
+	s.Seen = nil
+	for _, a := range current {
+		if seen[a.id] {
+			s.Seen = append(s.Seen, a.id)
+			delete(seen, a.id)
+		}
+	}
 }
 
 // fetchState is when any worktree of a repo last fetched; they share origin's

@@ -146,37 +146,71 @@ func (w watcher) check(ctx context.Context, ev event, cwd string) (text, decisio
 	if err := w.states.save(r.root, st); err != nil {
 		return "", "", err
 	}
+	var (
+		rep   report
+		files paths
+		quiet = "quiet"
+	)
 	if branch == def {
-		return "", "default-branch", nil
+		// The default branch overlaps nothing of its own; its uncommitted
+		// files still hear the board.
+		quiet = "default-branch"
+		files, err = r.uncommittedFiles(ctx)
+	} else {
+		rep, files, err = w.overlap(ctx, r, branch, def, now)
 	}
-
-	rep, err := w.overlap(ctx, r, branch, def, now)
 	if err != nil {
 		return "", "", err
+	}
+	recent, err := w.recentAnnouncements(r, now)
+	if err != nil {
+		return "", "", err
+	}
+	for _, a := range recent {
+		if a.concerns(branch, files) {
+			rep.announcements = append(rep.announcements, a)
+		}
 	}
 	prev := st.Fingerprint
 	if ev == sessionStart {
 		// A new or compacted context has lost every earlier notice.
 		prev = fingerprint{}
+	} else {
+		rep.announcements = st.unseen(rep.announcements)
 	}
-	text = render(branch, def, prev.news(rep))
+	text, shown := render(branch, def, prev.news(rep))
 	st.Fingerprint = fingerprintOf(rep)
+	st.see(shown, recent)
 	if err := w.states.save(r.root, st); err != nil {
 		return "", "", err
 	}
 	if text == "" {
-		return "", "quiet", nil
+		return "", quiet, nil
 	}
 	return text, "spoke", nil
 }
 
+// recentAnnouncements reads the repo's board for the announcements inside
+// the window.
+func (w watcher) recentAnnouncements(r repo, now time.Time) ([]announcement, error) {
+	e, skipped, err := r.board().read()
+	if err != nil {
+		return nil, err
+	}
+	if skipped > 0 {
+		w.log.Warn("board lines skipped", "root", r.root, "count", skipped)
+	}
+	return e.recentAnnouncements(now), nil
+}
+
 // overlap fetches the default branch when the repo's fetch window allows and
-// reports what this branch shares with it and with sibling branches.
-func (w watcher) overlap(ctx context.Context, r repo, branch, def string, now time.Time) (report, error) {
+// reports what this branch shares with it and with sibling branches, and
+// the files the branch changes.
+func (w watcher) overlap(ctx context.Context, r repo, branch, def string, now time.Time) (report, paths, error) {
 	var rep report
 	if now.Sub(w.states.lastFetch(r.commonDir)) >= window {
 		if err := w.states.saveFetch(r.commonDir, now); err != nil {
-			return report{}, err
+			return report{}, nil, err
 		}
 		if err := r.git.fetch(ctx, r.root, def); err != nil {
 			rep.stale = true
@@ -185,24 +219,24 @@ func (w watcher) overlap(ctx context.Context, r repo, branch, def string, now ti
 	}
 	uncommitted, err := r.uncommittedFiles(ctx)
 	if err != nil {
-		return report{}, err
+		return report{}, nil, err
 	}
 	files, err := r.branchFiles(ctx, def, uncommitted)
 	if err != nil {
-		return report{}, err
+		return report{}, nil, err
 	}
 	commits, err := r.upstream(ctx, def)
 	if err != nil {
-		return report{}, err
+		return report{}, nil, err
 	}
 	pushed, err := r.pushed(ctx)
 	if err != nil {
-		return report{}, err
+		return report{}, nil, err
 	}
 	own := branchWork{branch: branch, files: files, uncommitted: uncommitted}
 	sibs, skipped, err := r.siblings(ctx, def, own, pushed)
 	if err != nil {
-		return report{}, err
+		return report{}, nil, err
 	}
 	for b, err := range skipped {
 		w.log.Warn("sibling skipped", "root", r.root, "branch", b, "error", err.Error())
@@ -210,5 +244,5 @@ func (w watcher) overlap(ctx context.Context, r repo, branch, def string, now ti
 	rep.upstream = upstreamOverlap(commits, files)
 	rep.siblings = sibs
 	rep.pushed = pushed[branch]
-	return rep, nil
+	return rep, files, nil
 }

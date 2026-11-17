@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -386,4 +387,97 @@ func TestHookLogsOneLineWithoutThePrompt(t *testing.T) {
 	if strings.Contains(r.log.String(), "secret prompt text") {
 		t.Fatalf("log holds the prompt:\n%s", r.log.String())
 	}
+}
+
+// post posts an announcement from dir at the rig's current time.
+func (r *rig) post(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	if code := (poster{git: r.f.runner(), now: r.clock.now}).run(dir, append([]string{"post"}, args...), &stdout, &stderr); code != 0 {
+		t.Fatalf("post exit %d: %s", code, stderr.String())
+	}
+}
+
+func TestHookAnnouncementsMatchBranchFiles(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	x := r.f.worktree("x", "feat/x")
+	r.f.commit(x, map[string]string{"pkg/m/m.go": "package m // feat/x\n"}, "x")
+	r.post(t, x, "--summary", "m.Send takes a context.", "--action", "pass ctx.", "--paths", "pkg/m")
+	r.post(t, x, "--summary", "Go 1.27 now.", "--action", "rebuild.")
+	sha7 := r.f.git(x, "rev-parse", "--short=7", "HEAD")
+	m := r.f.worktree("m", "feat/m")
+	r.f.commit(m, map[string]string{"pkg/m/m.go": "package m // feat/m\n"}, "m")
+	a := r.f.worktree("a", "feat/a")
+	r.f.commit(a, map[string]string{"a.go": "package a // feat/a\n"}, "a")
+
+	wantContains(t, runHook(t, r.w, startEvent(m)),
+		"Announcements from other branches:\n",
+		"- 2026-03-01 09:00 UTC, feat/x @ "+sha7+": m.Send takes a context. Do: pass ctx. (paths: pkg/m)\n",
+		"- 2026-03-01 09:00 UTC, feat/x @ "+sha7+": Go 1.27 now. Do: rebuild.\n")
+	got := runHook(t, r.w, startEvent(a))
+	wantContains(t, got, "Go 1.27 now.")
+	if strings.Contains(got, "m.Send") {
+		t.Errorf("a worktree that changes only a.go hears about pkg/m:\n%s", got)
+	}
+	if got := runHook(t, r.w, startEvent(x)); strings.Contains(got, "Announcements") {
+		t.Errorf("the posting branch hears its own announcements:\n%s", got)
+	}
+}
+
+func TestHookAnnouncementsExpire(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	x := r.f.worktree("x", "feat/x")
+	r.post(t, x, "--summary", "old news", "--action", "none")
+	a := r.f.worktree("a", "feat/a")
+	r.clock.advance(14*24*time.Hour + time.Second)
+	wantSilent(t, runHook(t, r.w, startEvent(a)))
+}
+
+func TestHookAnnouncementsSeen(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	x := r.f.worktree("x", "feat/x")
+	r.post(t, x, "--summary", "heads up", "--action", "adapt")
+	a := r.f.worktree("a", "feat/a")
+	b := r.f.worktree("b", "feat/b")
+
+	wantContains(t, runHook(t, r.w, promptEvent(a)), "heads up")
+	r.clock.advance(31 * time.Minute)
+	wantSilent(t, runHook(t, r.w, promptEvent(a)))
+	wantContains(t, runHook(t, r.w, startEvent(a)), "heads up")
+	wantContains(t, runHook(t, r.w, promptEvent(b)), "heads up")
+}
+
+func TestHookAnnouncementsDroppedByTheCapComeBack(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	x := r.f.worktree("x", "feat/x")
+	const n = 8
+	for i := range n {
+		r.post(t, x, "--summary", fmt.Sprintf("note %d %s", i, strings.Repeat("s", 250)), "--action", strings.Repeat("a", 250))
+	}
+	a := r.f.worktree("a", "feat/a")
+	first := runHook(t, r.w, promptEvent(a))
+	r.clock.advance(31 * time.Minute)
+	second := runHook(t, r.w, promptEvent(a))
+	for i := range n {
+		note := fmt.Sprintf("note %d ", i)
+		if strings.Contains(first, note) == strings.Contains(second, note) {
+			t.Errorf("%q in first run %v, in second %v; want exactly one", note, strings.Contains(first, note), strings.Contains(second, note))
+		}
+	}
+	if strings.Contains(first, "note 7 ") {
+		t.Fatal("the cap dropped nothing; the test needs more announcements")
+	}
+}
+
+func TestHookDefaultBranchHearsAnnouncements(t *testing.T) {
+	t.Parallel()
+	r := newRig(t)
+	x := r.f.worktree("x", "feat/x")
+	r.post(t, x, "--summary", "m changes", "--action", "adapt", "--paths", "pkg/m")
+	r.f.write(r.f.main, map[string]string{"pkg/m/m.go": "package m // wip on master\n"})
+	wantContains(t, runHook(t, r.w, startEvent(r.f.main)), "m changes")
 }

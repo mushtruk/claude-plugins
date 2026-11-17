@@ -17,7 +17,7 @@ func manyFiles(n int) paths {
 
 func TestRenderCapsFilesPerSection(t *testing.T) {
 	t.Parallel()
-	got := render("feat/a", "master", report{
+	got, _ := render("feat/a", "master", report{
 		upstream: upstreamFinding{commits: 40, shas: []string{"s1"}, files: manyFiles(30)},
 	})
 	for _, want := range []string{
@@ -39,7 +39,7 @@ func TestRenderDropsWholeSectionsOverTheCap(t *testing.T) {
 	for i := range 40 {
 		sibs = append(sibs, siblingFinding{branch: fmt.Sprintf("feat/s%02d", i), files: manyFiles(10)})
 	}
-	got := render("feat/a", "master", report{siblings: sibs})
+	got, _ := render("feat/a", "master", report{siblings: sibs})
 	if n := utf8.RuneCountInString(got); n > 3000 {
 		t.Fatalf("render is %d characters, over 3000", n)
 	}
@@ -59,7 +59,7 @@ func TestRenderDropsWholeSectionsOverTheCap(t *testing.T) {
 
 func TestRenderOrdersSiblingsByOverlapThenName(t *testing.T) {
 	t.Parallel()
-	got := render("feat/a", "master", report{siblings: []siblingFinding{
+	got, _ := render("feat/a", "master", report{siblings: []siblingFinding{
 		{branch: "feat/b", files: paths{"a.go"}},
 		{branch: "feat/c", files: paths{"a.go", "b.go"}},
 		{branch: "feat/a2", files: paths{"a.go"}},
@@ -72,10 +72,10 @@ func TestRenderOrdersSiblingsByOverlapThenName(t *testing.T) {
 
 func TestRenderStaleNoteOnlyWithASection(t *testing.T) {
 	t.Parallel()
-	if got := render("feat/a", "master", report{stale: true}); got != "" {
+	if got, _ := render("feat/a", "master", report{stale: true}); got != "" {
 		t.Fatalf("stale note alone rendered %q", got)
 	}
-	got := render("feat/a", "master", report{stale: true, siblings: []siblingFinding{{branch: "feat/x", files: paths{"a.go"}}}})
+	got, _ := render("feat/a", "master", report{stale: true, siblings: []siblingFinding{{branch: "feat/x", files: paths{"a.go"}}}})
 	if !strings.HasPrefix(got, "driftguard: feat/a overlaps other work. git fetch failed, so origin refs may be stale.\n") {
 		t.Fatalf("stale note missing:\n%s", got)
 	}
@@ -95,7 +95,7 @@ func TestRenderRecommendation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := render("feat/a", "master", report{upstream: up, pushed: tt.pushed})
+			got, _ := render("feat/a", "master", report{upstream: up, pushed: tt.pushed})
 			if !strings.Contains(got, tt.want) {
 				t.Fatalf("render lacks %q:\n%s", tt.want, got)
 			}
@@ -105,7 +105,7 @@ func TestRenderRecommendation(t *testing.T) {
 
 func TestRenderSibling(t *testing.T) {
 	t.Parallel()
-	got := render("feat/a", "master", report{siblings: []siblingFinding{{branch: "feat/x", pushed: true, files: paths{"a.go"}}}})
+	got, _ := render("feat/a", "master", report{siblings: []siblingFinding{{branch: "feat/x", pushed: true, files: paths{"a.go"}}}})
 	want := "driftguard: feat/a overlaps other work.\n" +
 		"feat/x (pushed) changes 1 file your branch also changes:\n" +
 		"- a.go\n" +

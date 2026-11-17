@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -38,6 +39,16 @@ func openRepo(ctx context.Context, g gitRunner, cwd string) (repo, error) {
 		return repo{}, fmt.Errorf("git rev-parse: unexpected output %q", out)
 	}
 	return repo{git: g, root: lines[0], commonDir: lines[1]}, nil
+}
+
+// board is the repo's board, shared by every worktree.
+func (r repo) board() board {
+	return board{path: filepath.Join(r.commonDir, "driftguard", "board.jsonl")}
+}
+
+// head returns the full sha of HEAD.
+func (r repo) head(ctx context.Context) (string, error) {
+	return r.line(ctx, "rev-parse", "HEAD")
 }
 
 func (r repo) run(ctx context.Context, args ...string) ([]byte, error) {
