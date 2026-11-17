@@ -27,7 +27,6 @@ type repo struct {
 // branch.
 type branchWork struct {
 	branch      string
-	files       paths // committed since the merge base, plus uncommitted
 	uncommitted paths
 }
 
@@ -133,7 +132,7 @@ func (r repo) branchFiles(ctx context.Context, def string, uncommitted paths) (p
 
 // upstream returns the commits on origin/<def> since this branch's merge base.
 func (r repo) upstream(ctx context.Context, def string) ([]commit, error) {
-	out, err := r.run(ctx, "log", "--no-renames", "--name-only", "-z", "--format=%x00%H", "origin/"+def, "^HEAD")
+	out, err := r.run(ctx, logNames("%x00%H", "origin/"+def, "^HEAD")...)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +230,14 @@ func (r repo) siblingOverlap(ctx context.Context, def, branch string, own branch
 
 // commitFiles returns the files the non-merge commits in revs change.
 func (r repo) commitFiles(ctx context.Context, revs ...string) (paths, error) {
-	return r.nulPaths(ctx, append([]string{"log", "--no-renames", "--name-only", "-z", "--format="}, revs...)...)
+	return r.nulPaths(ctx, logNames("", revs...)...)
+}
+
+// logNames returns the arguments of a git log that lists each commit's files,
+// NUL-separated, after a header in format. A signature check would print
+// ahead of the files, so it is never shown.
+func logNames(format string, revs ...string) []string {
+	return append([]string{"log", "--no-renames", "--no-show-signature", "--name-only", "-z", "--format=" + format}, revs...)
 }
 
 // tip is what git knows of a branch's ref when deciding whether it landed.

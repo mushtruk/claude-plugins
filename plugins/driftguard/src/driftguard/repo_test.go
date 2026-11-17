@@ -50,7 +50,7 @@ func surveyOf(t *testing.T, f *fixture, dir string) survey {
 	if err != nil {
 		t.Fatal(err)
 	}
-	own := branchWork{branch: branch, files: files, uncommitted: uncommitted}
+	own := branchWork{branch: branch, uncommitted: uncommitted}
 	sibs, skipped, err := r.siblings(ctx, def, own, pushed)
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +117,26 @@ func TestRepoSurvey(t *testing.T) {
 				return w
 			},
 			want: survey{files: paths{"a.go", "z.go"}},
+		},
+		{
+			name: "signed commits keep every file when logs show signatures",
+			setup: func(f *fixture) string {
+				f.signCommits()
+				w := f.worktree("w", "feat/a")
+				f.commit(w, map[string]string{"a.go": "package a // feat/a\n", "b.go": "package b // feat/a\n"}, "a")
+				x := f.worktree("x", "feat/x")
+				f.commit(x, map[string]string{"a.go": "package a // feat/x\n", "b.go": "package b // feat/x\n"}, "x")
+				f.upstream(map[string]string{"a.go": "package a // up\n", "c.go": "package c // up\n"})
+				f.fetchMain()
+				return w
+			},
+			want: survey{
+				files:         paths{"a.go", "b.go"},
+				commits:       1,
+				overlapping:   1,
+				upstreamFiles: paths{"a.go"},
+				siblings:      []siblingFinding{{branch: "feat/x", files: paths{"a.go", "b.go"}}},
+			},
 		},
 		{
 			name: "sibling overlap, local only",

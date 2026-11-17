@@ -238,7 +238,7 @@ func (w watcher) overlap(ctx context.Context, r repo, branch, def string, now ti
 	if err != nil {
 		return report{}, nil, err
 	}
-	own := branchWork{branch: branch, files: files, uncommitted: uncommitted}
+	own := branchWork{branch: branch, uncommitted: uncommitted}
 	sibs, skipped, err := r.siblings(ctx, def, own, pushed)
 	if err != nil {
 		return report{}, nil, err

@@ -133,6 +133,33 @@ func (f *fixture) upstream(files map[string]string) {
 	f.push(dir, "master")
 }
 
+// signCommits makes every later commit ssh-signed with a throwaway key and
+// every log show its signature check, through the fixture's own global config.
+func (f *fixture) signCommits() {
+	f.t.Helper()
+	key := filepath.Join(f.dir, "signing_key")
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "test@driftguard.invalid", "-f", key).CombinedOutput(); err != nil {
+		f.t.Fatalf("ssh-keygen: %v\n%s", err, out)
+	}
+	pub, err := os.ReadFile(key + ".pub")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	signers := filepath.Join(f.dir, "allowed_signers")
+	if err := os.WriteFile(signers, append([]byte("test@driftguard.invalid "), pub...), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	for _, kv := range [][2]string{
+		{"gpg.format", "ssh"},
+		{"user.signingKey", key},
+		{"gpg.ssh.allowedSignersFile", signers},
+		{"commit.gpgSign", "true"},
+		{"log.showSignature", "true"},
+	} {
+		f.git(f.dir, "config", "--global", kv[0], kv[1])
+	}
+}
+
 func (f *fixture) fetchMain() {
 	f.t.Helper()
 	f.git(f.main, "fetch", "-q", "origin")
