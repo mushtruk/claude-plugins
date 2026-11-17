@@ -70,6 +70,19 @@ func (r repo) nulPaths(ctx context.Context, args ...string) (paths, error) {
 	return newPaths(splitNul(out)), nil
 }
 
+// set returns the whitespace-separated words of a git call's output.
+func (r repo) set(ctx context.Context, args ...string) (map[string]bool, error) {
+	out, err := r.run(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	words := make(map[string]bool)
+	for _, w := range strings.Fields(string(out)) {
+		words[w] = true
+	}
+	return words, nil
+}
+
 // branch returns the checked-out branch, or errDetached.
 func (r repo) branch(ctx context.Context) (string, error) {
 	b, err := r.line(ctx, "symbolic-ref", "-q", "--short", "HEAD")
@@ -168,45 +181,9 @@ func (r repo) worktreeBranches(ctx context.Context) ([]string, error) {
 	return branches, nil
 }
 
-// ownCommits returns the commits on this branch that are not on origin/<def>.
-func (r repo) ownCommits(ctx context.Context, def string) (map[string]bool, error) {
-	out, err := r.run(ctx, "rev-list", "origin/"+def+"..HEAD")
-	if err != nil {
-		return nil, err
-	}
-	own := make(map[string]bool)
-	for _, sha := range strings.Fields(string(out)) {
-		own[sha] = true
-	}
-	return own, nil
-}
-
-func (r repo) mergeBase(ctx context.Context, ref string) (string, error) {
-	return r.line(ctx, "merge-base", "HEAD", ref)
-}
-
-// siblingFiles returns the files branch's commits change since its merge base
-// with the default branch.
-func (r repo) siblingFiles(ctx context.Context, def, branch string) (paths, error) {
-	return r.nulPaths(ctx, "diff", "--name-only", "--no-renames", "-z", "origin/"+def+"...refs/heads/"+branch)
-}
-
-// filesSince returns the files that differ between base and ref.
-func (r repo) filesSince(ctx context.Context, base, ref string) (paths, error) {
-	return r.nulPaths(ctx, "diff", "--name-only", "--no-renames", "-z", base, ref)
-}
-
 // pushed returns the branch names that exist on origin.
 func (r repo) pushed(ctx context.Context) (map[string]bool, error) {
-	out, err := r.run(ctx, "for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/origin/")
-	if err != nil {
-		return nil, err
-	}
-	set := make(map[string]bool)
-	for _, b := range strings.Fields(string(out)) {
-		set[b] = true
-	}
-	return set, nil
+	return r.set(ctx, "for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/origin/")
 }
 
 // siblings returns, for every other branch checked out in a worktree, the
@@ -217,15 +194,11 @@ func (r repo) siblings(ctx context.Context, def string, own branchWork, pushed m
 	if err != nil {
 		return nil, nil, err
 	}
-	ownCommits, err := r.ownCommits(ctx, def)
-	if err != nil {
-		return nil, nil, err
-	}
 	for _, b := range branches {
 		if b == own.branch || b == def {
 			continue
 		}
-		files, err := r.siblingOverlap(ctx, def, b, own, ownCommits)
+		files, err := r.siblingOverlap(ctx, def, b, own)
 		if err != nil {
 			if skipped == nil {
 				skipped = make(map[string]error)
@@ -240,32 +213,25 @@ func (r repo) siblings(ctx context.Context, def string, own branchWork, pushed m
 	return found, skipped, nil
 }
 
-// siblingOverlap compares a sibling stacked on this branch, or this branch's
-// base, from their fork point, so commits both inherit don't count.
-func (r repo) siblingOverlap(ctx context.Context, def, branch string, own branchWork, ownCommits map[string]bool) (paths, error) {
+// siblingOverlap compares only the commits each side has and the other and
+// origin/<def> lack, so commits both inherit, from a stacked base or from
+// merging the default branch, don't count.
+func (r repo) siblingOverlap(ctx context.Context, def, branch string, own branchWork) (paths, error) {
 	ref := "refs/heads/" + branch
-	if len(ownCommits) > 0 {
-		base, err := r.mergeBase(ctx, ref)
-		if err != nil {
-			return nil, err
-		}
-		if ownCommits[base] {
-			theirs, err := r.filesSince(ctx, base, ref)
-			if err != nil {
-				return nil, err
-			}
-			mine, err := r.filesSince(ctx, base, "HEAD")
-			if err != nil {
-				return nil, err
-			}
-			return theirs.intersect(mine.union(own.uncommitted)), nil
-		}
-	}
-	theirs, err := r.siblingFiles(ctx, def, branch)
+	theirs, err := r.commitFiles(ctx, "origin/"+def+".."+ref, "^HEAD")
 	if err != nil {
 		return nil, err
 	}
-	return theirs.intersect(own.files), nil
+	mine, err := r.commitFiles(ctx, "origin/"+def+"..HEAD", "^"+ref)
+	if err != nil {
+		return nil, err
+	}
+	return theirs.intersect(mine.union(own.uncommitted)), nil
+}
+
+// commitFiles returns the files the non-merge commits in revs change.
+func (r repo) commitFiles(ctx context.Context, revs ...string) (paths, error) {
+	return r.nulPaths(ctx, append([]string{"log", "--no-renames", "--name-only", "-z", "--format="}, revs...)...)
 }
 
 // tip is what git knows of a branch's ref when deciding whether it landed.
@@ -366,15 +332,7 @@ func (r repo) isAncestor(ctx context.Context, commit, of string) (bool, error) {
 
 // firstParents returns the commits on ref's first-parent chain.
 func (r repo) firstParents(ctx context.Context, ref string) (map[string]bool, error) {
-	out, err := r.run(ctx, "rev-list", "--first-parent", ref)
-	if err != nil {
-		return nil, err
-	}
-	chain := make(map[string]bool)
-	for _, sha := range strings.Fields(string(out)) {
-		chain[sha] = true
-	}
-	return chain, nil
+	return r.set(ctx, "rev-list", "--first-parent", ref)
 }
 
 // created returns the time of the oldest entry in branch's reflog, zero when

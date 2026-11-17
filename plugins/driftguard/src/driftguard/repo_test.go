@@ -239,6 +239,22 @@ func TestRepoSurvey(t *testing.T) {
 			},
 		},
 		{
+			name: "stacked branch ignores files inherited from its base after both merge the default branch",
+			setup: func(f *fixture) string {
+				x := f.worktree("x", "feat/x")
+				f.commit(x, map[string]string{"a.go": "package a // feat/x\n"}, "x")
+				y := f.worktree("y", "feat/y")
+				f.git(y, "reset", "-q", "--hard", "feat/x")
+				f.commit(y, map[string]string{"b.go": "package b // feat/y\n"}, "y")
+				f.upstream(map[string]string{"c.go": "package c // up\n"})
+				f.fetchMain()
+				f.git(x, "merge", "-q", "--no-edit", "origin/master")
+				f.git(y, "merge", "-q", "--no-edit", "origin/master")
+				return y
+			},
+			want: survey{files: paths{"a.go", "b.go"}},
+		},
+		{
 			name: "base branch hears its stacked branch only past the fork",
 			setup: func(f *fixture) string {
 				x := f.worktree("x", "feat/x")

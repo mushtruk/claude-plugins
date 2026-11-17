@@ -49,8 +49,12 @@ func (f fingerprint) news(r report) report {
 			out.claims = append(out.claims, c)
 		}
 	}
+	seen := make(map[string]bool, len(f.Upstream))
+	for _, sha := range f.Upstream {
+		seen[sha] = true
+	}
 	for _, sha := range r.upstream.shas {
-		if !slices.Contains(f.Upstream, sha) {
+		if !seen[sha] {
 			out.upstream = r.upstream
 			break
 		}

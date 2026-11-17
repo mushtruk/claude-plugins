@@ -19,7 +19,8 @@ const (
 	killDelay = 500 * time.Millisecond
 )
 
-// gitRunner runs git with no terminal, so neither git nor ssh can prompt, and
+// gitRunner runs git with no terminal, so neither git nor ssh can prompt,
+// without optional locks, so its reads never block a concurrent commit, and
 // stops the whole process group when a call outlives its timeout.
 type gitRunner struct {
 	env          []string // added to the inherited environment
@@ -73,7 +74,7 @@ func (g gitRunner) exec(ctx context.Context, timeout time.Duration, dir string, 
 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(append(cmd.Environ(), g.env...), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(append(cmd.Environ(), g.env...), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	// SIGTERM lets git remove its lockfiles; a SIGKILLed fetch leaves a ref
 	// lock behind that fails every later fetch.
