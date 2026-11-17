@@ -99,6 +99,6 @@ The hooks run `driftguard`, a small Go binary (source in `plugins/driftguard/src
 ```sh
 cd plugins/driftguard/src/driftguard && go test ./...
 for t in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
-  CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -ldflags='-s -w -buildid=' -o ../../bin/driftguard-${t%/*}-${t#*/} .
+  CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o ../../bin/driftguard-${t%/*}-${t#*/} .
 done
 ```
