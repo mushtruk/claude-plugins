@@ -194,7 +194,7 @@ func TestPostToolUse(t *testing.T) {
 	}
 	// Exact message for the 130k agent.
 	os.Remove(filepath.Join(state, "agent-high"))
-	want := "CONTEXT LIMIT: you are at 130k tokens. Finish the step you are on (do not start a new one), then hand off as your agent instructions say: write the handoff file and return Status: HANDOFF <path>."
+	want := "CONTEXT LIMIT: you are at 130k tokens. Finish the step you are on (do not start a new one) and any commit, rebase or gate run in progress; never hand off mid-rebase or with staged, uncommitted changes. Then hand off as your agent instructions say: write the handoff file and return Status: HANDOFF <path>."
 	m := runHook(t, ev("high", mainTr))
 	if got := additional(m); got != want {
 		t.Fatalf("got %q", got)
