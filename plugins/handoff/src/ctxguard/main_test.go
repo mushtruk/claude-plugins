@@ -109,17 +109,24 @@ func TestStatusline(t *testing.T) {
 	}
 }
 
-func runHook(t *testing.T, in map[string]any) map[string]any {
+// runHookRaw runs the hook and returns its stdout.
+func runHookRaw(t *testing.T, in map[string]any) string {
 	t.Helper()
 	b, _ := json.Marshal(in)
 	var out bytes.Buffer
 	hook(bytes.NewReader(b), &out)
-	if out.Len() == 0 {
+	return out.String()
+}
+
+func runHook(t *testing.T, in map[string]any) map[string]any {
+	t.Helper()
+	out := runHookRaw(t, in)
+	if out == "" {
 		return nil
 	}
 	var m map[string]any
-	if err := json.Unmarshal(out.Bytes(), &m); err != nil {
-		t.Fatalf("bad output %q: %v", out.String(), err)
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("bad output %q: %v", out, err)
 	}
 	return m
 }
@@ -129,6 +136,7 @@ func setup(t *testing.T) (state string) {
 	state = filepath.Join(t.TempDir(), "state")
 	t.Setenv("CTXGUARD_STATE_DIR", state)
 	t.Setenv("CTXGUARD_AGENT_LIMIT", "")
+	t.Setenv("CTXGUARD_AGENT_READ_CAP", "")
 	t.Setenv("CTXGUARD_MAIN_LIMIT", "")
 	t.Setenv("CTXGUARD_LOG", "")
 	t.Setenv("CTXGUARD_REAP", "")
