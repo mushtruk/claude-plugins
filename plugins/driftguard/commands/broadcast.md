@@ -44,4 +44,4 @@ Posted: <id> · <summary>
 Claimed: <id> · <summary>
 Released: <N> claims
 ```
-After `Claimed:`, add any overlap line `claim` printed. If the command printed no `posted`, `claimed` or `released` line, reply only `driftguard has no build for this platform; nothing was posted.`
+After `Claimed:`, add any overlap line `claim` printed. If the command printed no `posted`, `claimed` or `released` line, reply only with the line it printed on stderr; if it printed nothing at all, reply only `driftguard has no build for this platform; nothing was posted.`
