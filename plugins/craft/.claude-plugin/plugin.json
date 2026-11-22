@@ -1,0 +1,8 @@
+{
+  "name": "craft",
+  "description": "Engineering craft skills vendored from mattpocock/skills: a diagnosis loop for hard bugs, a PR body template, a style guide for documents agents read, and a session retrospective.",
+  "author": {
+    "name": "mushtruk"
+  },
+  "repository": "https://github.com/mushtruk/claude-plugins"
+}
