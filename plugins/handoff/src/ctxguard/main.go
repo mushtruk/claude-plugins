@@ -1,7 +1,7 @@
 // ctxguard: Claude Code status line and context-limit hooks.
 //
 //	ctxguard statusline   status line (stdin: status line JSON)
-//	ctxguard hook         PostToolUse / Stop / SessionStart / SessionEnd hook (stdin: hook JSON)
+//	ctxguard hook         PreToolUse / PostToolUse / Stop / SessionStart / SessionEnd hook (stdin: hook JSON)
 //	ctxguard reap [--dry-run]   SIGTERM orphaned processes of idle sessions
 //
 // The hooks never fail loudly: any error exits 0 without output (statusline
@@ -134,7 +134,11 @@ type hookInput struct {
 	Cwd            string `json:"cwd"`
 	ToolName       string `json:"tool_name"`
 	ToolInput      struct {
-		FilePath string `json:"file_path"`
+		FilePath string          `json:"file_path"`
+		Offset   json.RawMessage `json:"offset"`
+		Limit    json.RawMessage `json:"limit"`
+		Pages    json.RawMessage `json:"pages"`
+		Command  string          `json:"command"`
 	} `json:"tool_input"`
 }
 
@@ -153,6 +157,8 @@ func hook(in io.Reader, out io.Writer) {
 	}
 	var resp any
 	switch h.HookEventName {
+	case "PreToolUse":
+		resp, decision = preToolUse(h)
 	case "PostToolUse":
 		resp, decision = postToolUse(h)
 	case "Stop":
