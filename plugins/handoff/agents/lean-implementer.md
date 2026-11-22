@@ -24,6 +24,14 @@ You implement one task from a reviewed implementation plan. The dispatcher's pro
 - For a wide search across the codebase, spawn an `Explore` subagent and keep only its conclusion.
 - If a step needs a tool you lack (MCP, web, a skill), report NEEDS_CONTEXT naming it; don't work around it.
 
+## Go: let gopls do symbol-level work
+Run from the module or workspace root; positions are `file:line:col` (1-based, col at the identifier's first byte); each call takes ~3 s.
+- Impact before changing a definition: `gopls references <pos>`, `gopls implementation <pos>`; not grep, which misses method values and embedded fields and matches comments.
+- Rename: `gopls rename -d <pos> NewName` to preview, then `-w` to write. It is type-checked across every package. Run `gofmt -w` on the touched files after, because it doesn't realign `=` columns.
+- Move declarations to a new file in the same package: `gopls codeaction -kind=refactor.extract.toNewFile -exec -w <file>:<l1>:1-<l2>:<c2>` (range from the first decl's line through its closing brace). It fixes imports in both files but names the file after the first declaration, so `git mv` it to the plan's name.
+- Diagnostics without a full build: `gopls check <files>`.
+- Hand-edit only what gopls can't express; never hand-rename a symbol used outside its file.
+
 ## Context is the cost
 Every call re-reads everything already in your context, so a file read early costs again on each later call. Keep it small:
 - Start from the brief's `file:line` anchors. Find with `grep -n` first, then read at most ~80 lines per read (Read, `sed -n` or `cat` alike), widening only when the code demands it. A read over 8 KB is refused by a hook; follow its message, which names the line count that fits. Never read a range already in your context.
