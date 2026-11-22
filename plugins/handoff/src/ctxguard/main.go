@@ -200,8 +200,9 @@ func postToolUse(h hookInput) (any, string) {
 	}
 	return map[string]any{"hookSpecificOutput": map[string]any{
 		"hookEventName": "PostToolUse",
-		"additionalContext": fmt.Sprintf("CONTEXT LIMIT: you are at %dk tokens. Finish the step you are on (do not start a new one), "+
-			"then hand off as your agent instructions say: write the handoff file and return Status: HANDOFF <path>.", n/1000),
+		"additionalContext": fmt.Sprintf("CONTEXT LIMIT: you are at %dk tokens. Finish the step you are on (do not start a new one) "+
+			"and any commit, rebase or gate run in progress; never hand off mid-rebase or with staged, uncommitted changes. "+
+			"Then hand off as your agent instructions say: write the handoff file and return Status: HANDOFF <path>.", n/1000),
 	}}, fmt.Sprintf("agent-notified %d", n)
 }
 
