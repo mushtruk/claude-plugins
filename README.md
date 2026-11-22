@@ -69,7 +69,7 @@ Set these in the `env` block of `~/.claude/settings.json`:
 ```sh
 cd plugins/handoff/src/ctxguard && go test ./...
 for t in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
-  CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -ldflags='-s -w -buildid=' -o ../../bin/ctxguard-${t%/*}-${t#*/} .
+  CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o ../../bin/ctxguard-${t%/*}-${t#*/} .
 done
 ```
 
