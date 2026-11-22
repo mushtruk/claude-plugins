@@ -6,6 +6,7 @@ Claude Code plugins.
 /plugin marketplace add mushtruk/claude-plugins
 /plugin install handoff@mushtruk
 /plugin install driftguard@mushtruk
+/plugin install craft@mushtruk
 ```
 
 Then restart Claude Code. A private repo clones over your GitHub SSH key (it must work without a passphrase prompt) or a stored HTTPS credential. Updates are off by default: `/plugin` → Marketplaces → mushtruk → Enable auto-update, or `/plugin marketplace update mushtruk`.
@@ -106,3 +107,16 @@ for t in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
   CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o ../../bin/driftguard-${t%/*}-${t#*/} .
 done
 ```
+
+## craft
+
+Skills for the parts of engineering work that go wrong by habit: guessing at a bug's cause before it reproduces, PR bodies that bury the change, documents for agents that bloat, and sessions whose lessons never reach the environment.
+
+| Skill | What it does |
+|---|---|
+| `craft:diagnosing-bugs` | Diagnosis loop for hard bugs and performance regressions: build a tight feedback loop that goes red on the bug, reproduce and minimise, rank falsifiable hypotheses, instrument one variable at a time, then fix behind a regression test and clean up. Fires on "diagnose", "debug this", or a report that something is broken, throwing, failing or slow. It replaces `superpowers:systematic-debugging` for bugs. |
+| `craft:pr` | A PR body template: a Summary shown as the smallest visual that makes the point (pseudocode, call tree, file tree, Mermaid, diff), before-and-after Evidence, and Merge Danger (one-way or two-way door, blast radius). |
+| `craft:writing-for-agents` | Reference for writing a skill, a `CLAUDE.md` / `AGENTS.md` or any doc an agent reads: context pointers, the information hierarchy, completion criteria, leading words and pruning. Fires when creating or editing a skill or a `CLAUDE.md` / `AGENTS.md`. |
+| `/craft:retro [session]` | User-invoked retrospective on a session (the current one by default): reads its primary sources and ranks candidate improvements to the agent's environment, such as navigation pointers, automated checks, review rules and tool economy. |
+
+The skills are vendored from [mattpocock/skills](https://github.com/mattpocock/skills) at `abeeaf9` under the MIT license (`plugins/craft/LICENSE`). Their text is kept verbatim except where it pointed at things that exist only in that repo: a glossary, ADRs and an unvendored skill name.

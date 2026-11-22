@@ -12,6 +12,11 @@
       "name": "driftguard",
       "source": "./plugins/driftguard",
       "description": "Early warning for parallel branches: git overlap, announced contract changes, claimed surfaces"
+    },
+    {
+      "name": "craft",
+      "source": "./plugins/craft",
+      "description": "Skills from mattpocock/skills: bug diagnosis loop, PR bodies, writing for agents, retrospectives"
     }
   ]
 }
