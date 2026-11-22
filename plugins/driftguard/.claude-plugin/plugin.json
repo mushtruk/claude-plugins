@@ -1,0 +1,8 @@
+{
+  "name": "driftguard",
+  "description": "Early warning for parallel branches: tells each session which files its branch shares with the default branch and sibling branches, and which announced contract changes and claimed surfaces touch its files.",
+  "author": {
+    "name": "mushtruk"
+  },
+  "repository": "https://github.com/mushtruk/claude-plugins"
+}

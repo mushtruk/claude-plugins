@@ -7,6 +7,11 @@
       "name": "handoff",
       "source": "./plugins/handoff",
       "description": "Context-limit handoffs: status line, threshold hooks, /handoff command, lean subagents"
+    },
+    {
+      "name": "driftguard",
+      "source": "./plugins/driftguard",
+      "description": "Early warning for parallel branches: git overlap, announced contract changes, claimed surfaces"
     }
   ]
 }
